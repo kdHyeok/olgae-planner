@@ -12,6 +12,9 @@
   - 항목 추가(대분류/하위), 제목·상태·중요도·설명(마크다운) 편집, 삭제(하위 포함 연쇄 삭제)
   - **드래그 & 드롭**: 카드를 다른 카드 박스 위에 드롭 → 그 하위로 이동. 트리 뷰의 `PRD` 루트 카드(또는 디렉토리 뷰 목록 빈 곳)에 드롭 → 대분류로 승격. 자기 하위로의 순환 이동은 차단
   - **▲▼ 버튼**: 같은 부모 안에서 순서 변경
+- **사용자 / 코멘트**
+  - 사용자 이름 + 비밀번호로 회원가입/로그인 (PBKDF2 해시, DB 세션 토큰)
+  - 로그인한 사용자는 각 기능 항목에 코멘트 작성 가능, 본인 코멘트만 삭제 가능
 
 ## 구성
 
@@ -69,6 +72,12 @@ docker compose up -d --build
 | POST | `/api/nodes` | 노드 생성 (`{parent_id, title}`) |
 | PUT | `/api/nodes/{id}` | 부분 수정 (`title/description/status/importance/sort_order/parent_id`) — `parent_id` 변경 시 순환 이동은 400 |
 | DELETE | `/api/nodes/{id}` | 삭제 (하위 노드 연쇄 삭제) |
+| POST | `/api/auth/register` | 회원가입 (`{username, password}` → `{token, username}`) |
+| POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
+| POST | `/api/auth/logout` | 로그아웃 (Bearer 토큰) |
+| GET | `/api/nodes/{id}/comments` | 노드 코멘트 목록 |
+| POST | `/api/nodes/{id}/comments` | 코멘트 작성 (로그인 필요, `Authorization: Bearer <token>`) |
+| DELETE | `/api/comments/{id}` | 본인 코멘트 삭제 (로그인 필요) |
 
 ## 프로젝트 구조
 
