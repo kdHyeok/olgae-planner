@@ -81,7 +81,9 @@
 <body>
 <header>
   <h1>PRD & 기능명세서</h1>
-  <div class="tabs">
+  <button class="btn" id="btn-projects" onclick="goProjects()">내 프로젝트</button>
+  <b id="proj-name" style="font-size:15px;color:#444"></b>
+  <div class="tabs" id="tabs">
     <button id="tab-spec" class="active" onclick="setTab('spec')">기능명세서</button>
     <button id="tab-prd" onclick="setTab('prd')">PRD</button>
   </div>
@@ -99,16 +101,21 @@
 <script>
 const STATUSES = ['기획 작성중', '기획 완료', '개발 중', '완료'];
 let tab = 'spec', view = 'tree', nodes = [], selectedId = null, collapsed = new Set(), prdContent = '', prdEditing = false;
+let project = null, projects = [];
+const shareToken = new URLSearchParams(location.search).get('share');
 
 let auth = null;
 try { auth = JSON.parse(localStorage.getItem('auth')); } catch (e) {}
 const authHeaders = () => auth ? { Authorization: 'Bearer ' + auth.token } : {};
 
-const api = (url, opt = {}) => fetch(url, { ...opt, headers: { ...authHeaders(), ...(opt.headers || {}) } })
+const api = (url, opt = {}) => {
+  if (shareToken) url += (url.includes('?') ? '&' : '?') + 'share=' + encodeURIComponent(shareToken);
+  return fetch(url, { ...opt, headers: { ...authHeaders(), ...(opt.headers || {}) } })
   .then(async r => {
     if (!r.ok) throw Object.assign(new Error(r.status), { detail: (await r.json().catch(() => ({}))).detail });
     return r.status === 204 ? null : r.json();
   });
+};
 
 // ---------- auth ----------
 function renderAuth() {
@@ -122,7 +129,10 @@ function renderAuth() {
        <button class="btn primary" onclick="doLogin()">로그인</button>
        <button class="btn" onclick="doRegister()">회원가입</button>`;
 }
-function setAuth(a) { auth = a; localStorage.setItem('auth', JSON.stringify(a)); renderAuth(); render(); }
+function setAuth(a) {
+  auth = a; localStorage.setItem('auth', JSON.stringify(a)); renderAuth();
+  if (shareToken) render(); else loadProjects().then(render);
+}
 async function doLogin() {
   try {
     setAuth(await api('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -137,7 +147,9 @@ async function doRegister() {
 }
 async function doLogout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
-  auth = null; localStorage.removeItem('auth'); renderAuth(); render();
+  auth = null; localStorage.removeItem('auth');
+  if (!shareToken) { project = null; projects = []; }
+  renderAuth(); render();
 }
 
 function childrenOf(pid) {
@@ -179,7 +191,7 @@ async function dropOn(e, targetId) {
     if (cur.id === id) { alert('자기 하위 항목으로는 이동할 수 없습니다.'); return; }
   await api('/api/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ parent_id: targetId }) });
-  nodes = await api('/api/nodes'); render();
+  nodes = await reloadNodes(); render();
 }
 
 async function moveNode(id, dir) {
@@ -192,22 +204,104 @@ async function moveNode(id, dir) {
   await Promise.all(order.map((nid, k) =>
     api('/api/nodes/' + nid, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sort_order: k }) })));
-  nodes = await api('/api/nodes'); render();
+  nodes = await reloadNodes(); render();
 }
 const MV = id => `<button class="mv" title="위로" onclick="event.stopPropagation();moveNode(${id},-1)">▲</button><button class="mv" title="아래로" onclick="event.stopPropagation();moveNode(${id},1)">▼</button>`;
 
 // ---------- rendering ----------
 function render() {
+  const c = document.getElementById('content');
+  const has = !!project;
+  document.getElementById('proj-name').textContent = has ? project.name : '';
+  document.getElementById('btn-projects').style.display = auth && !shareToken ? '' : 'none';
+  document.getElementById('tabs').style.display = has ? '' : 'none';
+  document.getElementById('viewtoggle').style.display = has && tab === 'spec' ? '' : 'none';
+  document.getElementById('add-root').style.display = has && tab === 'spec' ? '' : 'none';
+  if (!has) { renderProjects(c); document.getElementById('panel').classList.remove('open'); return; }
   document.getElementById('tab-spec').classList.toggle('active', tab === 'spec');
   document.getElementById('tab-prd').classList.toggle('active', tab === 'prd');
-  document.getElementById('viewtoggle').style.display = tab === 'spec' ? '' : 'none';
-  document.getElementById('add-root').style.display = tab === 'spec' ? '' : 'none';
   document.getElementById('view-tree').classList.toggle('active', view === 'tree');
   document.getElementById('view-dir').classList.toggle('active', view === 'dir');
-  const c = document.getElementById('content');
   if (tab === 'prd') { renderPrd(c); document.getElementById('panel').classList.remove('open'); return; }
   if (view === 'tree') renderTree(c); else renderDir(c);
   renderPanel();
+}
+
+// ---------- projects ----------
+function renderProjects(c) {
+  if (!auth) {
+    c.innerHTML = `<p style="margin:80px auto;text-align:center;color:#888;line-height:1.9">
+      로그인하면 프로젝트를 만들고 관리할 수 있습니다.<br>
+      공유 링크를 받았다면 그 주소로 접속하세요.</p>`;
+    return;
+  }
+  c.innerHTML = `<div style="max-width:780px;margin:20px auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2 style="font-size:20px">내 프로젝트</h2>
+      <button class="btn primary" onclick="createProject()">+ 새 프로젝트</button>
+    </div>
+    ${projects.map(p => `
+      <div style="display:flex;gap:8px;align-items:center;background:#fff;border:1px solid #e5e5e0;border-radius:10px;padding:14px 18px;margin-bottom:10px">
+        <a href="#" style="flex:1;font-weight:600;font-size:15px;color:#333;text-decoration:none"
+           onclick="openProject(${p.id});return false">${esc(p.name)}</a>
+        ${p.share_token
+          ? `<button class="btn" onclick="copyShare('${p.share_token}')">링크 복사</button>
+             <button class="btn danger" onclick="dropShare(${p.id})">링크 해제</button>`
+          : `<button class="btn" onclick="makeShare(${p.id})">공유 링크 생성</button>`}
+        <button class="btn" onclick="renameProject(${p.id})">이름 변경</button>
+        <button class="btn danger" onclick="deleteProject(${p.id})">삭제</button>
+      </div>`).join('') || '<p style="color:#aaa">프로젝트가 없습니다. 새 프로젝트를 만드세요.</p>'}
+  </div>`;
+}
+async function loadProjects() { projects = auth ? await api('/api/projects').catch(() => []) : []; }
+async function openProjectData() {
+  const [n, p] = await Promise.all([
+    api(`/api/projects/${project.id}/nodes`), api(`/api/projects/${project.id}/prd`)]);
+  nodes = n; prdContent = p.content;
+}
+async function openProject(id) {
+  project = projects.find(p => p.id === id);
+  selectedId = null; collapsed = new Set();
+  await openProjectData(); render();
+}
+function goProjects() {
+  project = null; selectedId = null;
+  loadProjects().then(render);
+}
+async function createProject() {
+  const name = prompt('프로젝트 이름', '');
+  if (!name) return;
+  await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }) });
+  await loadProjects(); render();
+}
+async function renameProject(id) {
+  const cur = projects.find(p => p.id === id);
+  const name = prompt('새 이름', cur.name);
+  if (!name || name === cur.name) return;
+  await api('/api/projects/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }) });
+  await loadProjects(); render();
+}
+async function deleteProject(id) {
+  if (!confirm('프로젝트와 모든 기능/코멘트가 삭제됩니다. 계속할까요?')) return;
+  await api('/api/projects/' + id, { method: 'DELETE' });
+  await loadProjects(); render();
+}
+async function makeShare(id) {
+  const r = await api(`/api/projects/${id}/share`, { method: 'POST' });
+  await loadProjects(); render(); copyShare(r.share_token);
+}
+async function dropShare(id) {
+  if (!confirm('공유 링크를 해제하면 기존 링크로 접속할 수 없습니다.')) return;
+  await api(`/api/projects/${id}/share`, { method: 'DELETE' });
+  await loadProjects(); render();
+}
+function copyShare(token) {
+  const url = location.origin + '/?share=' + token;
+  (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+    .then(() => alert('공유 링크가 복사되었습니다:\n' + url))
+    .catch(() => prompt('공유 링크:', url));
 }
 
 function renderTree(c) {
@@ -365,16 +459,24 @@ function select(id) { selectedId = selectedId === id ? null : id; render(); }
 function closePanel() { selectedId = null; render(); }
 function toggleCollapse(id) { collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); render(); }
 
-async function loadAll() {
-  const [n, p] = await Promise.all([api('/api/nodes'), api('/api/prd')]);
-  nodes = n; prdContent = p.content; render();
+async function boot() {
+  if (shareToken) {
+    try {
+      project = await api('/api/shared/' + shareToken);
+      await openProjectData();
+    } catch (e) { document.getElementById('content').innerHTML = '<p style="margin:80px auto;text-align:center;color:#c0392b">유효하지 않은 공유 링크입니다.</p>'; return; }
+  } else if (auth) {
+    await loadProjects();
+  }
+  render();
 }
+const reloadNodes = () => api(`/api/projects/${project.id}/nodes`);
 async function addNode(parentId) {
   const title = prompt(parentId ? '하위 기능 이름' : '대분류 이름', '');
   if (!title) return;
-  const n = await api('/api/nodes', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  const n = await api(`/api/projects/${project.id}/nodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ parent_id: parentId, title }) });
-  nodes = await api('/api/nodes');
+  nodes = await reloadNodes();
   selectedId = n.id; collapsed.delete(parentId); render();
 }
 async function saveNode(id) {
@@ -385,23 +487,23 @@ async function saveNode(id) {
       importance: +document.getElementById('f-importance').value,
       description: document.getElementById('f-desc').value,
     }) });
-  nodes = await api('/api/nodes'); render();
+  nodes = await reloadNodes(); render();
 }
 async function removeNode(id) {
   if (!confirm('이 항목과 모든 하위 항목이 삭제됩니다. 계속할까요?')) return;
   await api('/api/nodes/' + id, { method: 'DELETE' });
   if (selectedId === id) selectedId = null;
-  nodes = await api('/api/nodes'); render();
+  nodes = await reloadNodes(); render();
 }
 async function savePrd() {
   prdContent = document.getElementById('prd-edit').value;
-  await api('/api/prd', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  await api(`/api/projects/${project.id}/prd`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: prdContent }) });
   prdEditing = false; render();
 }
 
 renderAuth();
-loadAll();
+boot();
 </script>
 </body>
 </html>
