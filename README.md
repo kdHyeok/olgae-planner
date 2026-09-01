@@ -15,6 +15,10 @@
 - **사용자 / 코멘트**
   - 사용자 이름 + 비밀번호로 회원가입/로그인 (PBKDF2 해시, DB 세션 토큰)
   - 로그인한 사용자는 각 기능 항목에 코멘트 작성 가능, 본인 코멘트만 삭제 가능
+- **프로젝트**
+  - 사용자별로 여러 프로젝트 생성/이름 변경/삭제 (PRD와 기능 트리는 프로젝트 단위)
+  - 프로젝트 소유자만 접근 가능. 소유자가 **공유 링크**(`/?share=<token>`)를 생성하면 링크를 아는 누구나 열람·편집 가능, 링크 해제 시 즉시 차단
+  - 구버전 DB(프로젝트 개념 이전 데이터)는 첫 기동 시 "기본 프로젝트"로 자동 마이그레이션
 
 ## 구성
 
@@ -65,12 +69,17 @@ docker compose up -d --build
 
 ## API
 
+콘텐츠 API는 소유자 로그인(`Authorization: Bearer <token>`) 또는 유효한 공유 토큰(`?share=<token>`)이 필요합니다.
+
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| GET / PUT | `/api/prd` | PRD 문서 조회/저장 (`{content}`) |
-| GET | `/api/nodes` | 전체 기능 노드 목록 (flat, 프론트에서 트리 구성) |
-| POST | `/api/nodes` | 노드 생성 (`{parent_id, title}`) |
-| PUT | `/api/nodes/{id}` | 부분 수정 (`title/description/status/importance/sort_order/parent_id`) — `parent_id` 변경 시 순환 이동은 400 |
+| GET / POST | `/api/projects` | 내 프로젝트 목록 / 생성 (`{name}`) — 로그인 필요 |
+| PUT / DELETE | `/api/projects/{pid}` | 이름 변경 / 삭제 — 소유자만 |
+| POST / DELETE | `/api/projects/{pid}/share` | 공유 링크 생성 / 해제 — 소유자만 |
+| GET | `/api/shared/{token}` | 공유 토큰 → 프로젝트 정보 (공개) |
+| GET / PUT | `/api/projects/{pid}/prd` | PRD 문서 조회/저장 (`{content}`) |
+| GET / POST | `/api/projects/{pid}/nodes` | 기능 노드 목록 / 생성 (`{parent_id, title}`) |
+| PUT | `/api/nodes/{id}` | 부분 수정 (`title/description/status/importance/sort_order/parent_id`) — 순환 이동·타 프로젝트 이동은 400 |
 | DELETE | `/api/nodes/{id}` | 삭제 (하위 노드 연쇄 삭제) |
 | POST | `/api/auth/register` | 회원가입 (`{username, password}` → `{token, username}`) |
 | POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
