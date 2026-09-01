@@ -1,6 +1,8 @@
+import hashlib
 import os
+import secrets
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
@@ -94,6 +96,22 @@ def init_db():
                 status text NOT NULL DEFAULT '기획 작성중',
                 importance int NOT NULL DEFAULT 2,
                 sort_order int NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS users (
+                id serial PRIMARY KEY,
+                username text NOT NULL UNIQUE,
+                password text NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                token text PRIMARY KEY,
+                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS comments (
+                id serial PRIMARY KEY,
+                node_id int NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                content text NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now()
             );
         """)
         cur.execute("SELECT count(*) FROM prd")
@@ -207,3 +225,100 @@ def delete_node(node_id: int):
         cur.execute("DELETE FROM nodes WHERE id = %s", (node_id,))
         if cur.rowcount == 0:
             raise HTTPException(404, "not found")
+
+
+# ---------- auth ----------
+class Credentials(BaseModel):
+    username: str
+    password: str
+
+
+def hash_pw(pw: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 100_000).hex()
+    return f"{salt}${h}"
+
+
+def current_user(authorization: str | None = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "login required")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT u.id, u.username FROM sessions s
+                       JOIN users u ON u.id = s.user_id WHERE s.token = %s""",
+                    (authorization[7:],))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(401, "invalid session")
+    return {"id": row[0], "username": row[1]}
+
+
+def make_session(cur, user_id: int) -> str:
+    token = secrets.token_hex(32)
+    cur.execute("INSERT INTO sessions (token, user_id) VALUES (%s, %s)", (token, user_id))
+    return token
+
+
+@app.post("/api/auth/register", status_code=201)
+def register(body: Credentials):
+    if not body.username.strip() or len(body.password) < 4:
+        raise HTTPException(400, "사용자 이름과 4자 이상의 비밀번호가 필요합니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM users WHERE username = %s", (body.username,))
+        if cur.fetchone():
+            raise HTTPException(409, "이미 존재하는 사용자 이름입니다")
+        cur.execute("INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id",
+                    (body.username.strip(), hash_pw(body.password)))
+        return {"token": make_session(cur, cur.fetchone()[0]), "username": body.username.strip()}
+
+
+@app.post("/api/auth/login")
+def login(body: Credentials):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, password FROM users WHERE username = %s", (body.username,))
+        row = cur.fetchone()
+        if not row or not secrets.compare_digest(
+                hash_pw(body.password, row[1].split("$")[0]), row[1]):
+            raise HTTPException(401, "사용자 이름 또는 비밀번호가 올바르지 않습니다")
+        return {"token": make_session(cur, row[0]), "username": body.username}
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout(authorization: str | None = Header(None)):
+    if authorization and authorization.startswith("Bearer "):
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM sessions WHERE token = %s", (authorization[7:],))
+
+
+# ---------- comments ----------
+class CommentIn(BaseModel):
+    content: str
+
+
+@app.get("/api/nodes/{node_id}/comments")
+def list_comments(node_id: int):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT c.id, c.node_id, u.username, c.content, c.created_at
+                       FROM comments c JOIN users u ON u.id = c.user_id
+                       WHERE c.node_id = %s ORDER BY c.created_at""", (node_id,))
+        return rows_to_dicts(cur)
+
+
+@app.post("/api/nodes/{node_id}/comments", status_code=201)
+def create_comment(node_id: int, body: CommentIn, user: dict = Depends(current_user)):
+    if not body.content.strip():
+        raise HTTPException(400, "empty comment")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO comments (node_id, user_id, content)
+                       VALUES (%s, %s, %s) RETURNING id, node_id, content, created_at""",
+                    (node_id, user["id"], body.content.strip()))
+        row = rows_to_dicts(cur)[0]
+        return {**row, "username": user["username"]}
+
+
+@app.delete("/api/comments/{comment_id}", status_code=204)
+def delete_comment(comment_id: int, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM comments WHERE id = %s AND user_id = %s",
+                    (comment_id, user["id"]))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "본인 코멘트만 삭제할 수 있습니다")

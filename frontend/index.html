@@ -90,6 +90,7 @@
     <button id="view-dir" onclick="setView('dir')">디렉토리 뷰</button>
   </div>
   <button class="btn" id="add-root" onclick="addNode(null)">+ 대분류 추가</button>
+  <div id="authbox" style="margin-left:auto;display:flex;gap:6px;align-items:center"></div>
 </header>
 <main>
   <div id="content"></div>
@@ -99,10 +100,45 @@
 const STATUSES = ['기획 작성중', '기획 완료', '개발 중', '완료'];
 let tab = 'spec', view = 'tree', nodes = [], selectedId = null, collapsed = new Set(), prdContent = '', prdEditing = false;
 
-const api = (url, opt) => fetch(url, opt).then(r => {
-  if (!r.ok) throw new Error(r.status);
-  return r.status === 204 ? null : r.json();
-});
+let auth = null;
+try { auth = JSON.parse(localStorage.getItem('auth')); } catch (e) {}
+const authHeaders = () => auth ? { Authorization: 'Bearer ' + auth.token } : {};
+
+const api = (url, opt = {}) => fetch(url, { ...opt, headers: { ...authHeaders(), ...(opt.headers || {}) } })
+  .then(async r => {
+    if (!r.ok) throw Object.assign(new Error(r.status), { detail: (await r.json().catch(() => ({}))).detail });
+    return r.status === 204 ? null : r.json();
+  });
+
+// ---------- auth ----------
+function renderAuth() {
+  const el = document.getElementById('authbox');
+  el.innerHTML = auth
+    ? `<span style="font-size:14px;color:#555"><b>${esc(auth.username)}</b> 님</span>
+       <button class="btn" onclick="doLogout()">로그아웃</button>`
+    : `<input type="text" id="au-id" placeholder="사용자 이름" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px">
+       <input type="password" id="au-pw" placeholder="비밀번호" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px"
+         onkeydown="if(event.key==='Enter')doLogin()">
+       <button class="btn primary" onclick="doLogin()">로그인</button>
+       <button class="btn" onclick="doRegister()">회원가입</button>`;
+}
+function setAuth(a) { auth = a; localStorage.setItem('auth', JSON.stringify(a)); renderAuth(); render(); }
+async function doLogin() {
+  try {
+    setAuth(await api('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
+  } catch (e) { alert(e.detail || '로그인 실패'); }
+}
+async function doRegister() {
+  try {
+    setAuth(await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
+  } catch (e) { alert(e.detail || '회원가입 실패'); }
+}
+async function doLogout() {
+  await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  auth = null; localStorage.removeItem('auth'); renderAuth(); render();
+}
 
 function childrenOf(pid) {
   return nodes.filter(n => n.parent_id === pid).sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
@@ -271,7 +307,46 @@ function renderPanel() {
       <button class="btn" onclick="addNode(${n.id})">+ 하위 추가</button>
       <button class="btn danger" onclick="removeNode(${n.id})">삭제</button>
       <button class="btn" onclick="closePanel()">닫기</button>
-    </div>`;
+    </div>
+    <h3 style="margin:26px 0 6px;font-size:15px">코멘트</h3>
+    <div id="cmts" style="margin-bottom:8px"><p style="color:#aaa;font-size:13px">불러오는 중…</p></div>
+    ${auth ? `<div style="display:flex;gap:6px">
+        <input type="text" id="cmt-in" placeholder="코멘트를 입력하세요..."
+          style="flex:1;padding:8px;border:1px solid #ddd;border-radius:6px"
+          onkeydown="if(event.key==='Enter')addComment(${n.id})">
+        <button class="btn primary" onclick="addComment(${n.id})">등록</button>
+      </div>`
+      : '<p style="color:#aaa;font-size:13px">코멘트를 작성하려면 로그인하세요.</p>'}`;
+  loadComments(n.id);
+}
+
+async function loadComments(nodeId) {
+  const list = await api(`/api/nodes/${nodeId}/comments`).catch(() => []);
+  const el = document.getElementById('cmts');
+  if (!el || selectedId !== nodeId) return;
+  el.innerHTML = list.length ? list.map(c => `
+    <div style="border-bottom:1px solid #f0f0ec;padding:8px 0">
+      <div style="font-size:12px;color:#888">
+        <b style="color:#666">${esc(c.username)}</b> · ${new Date(c.created_at).toLocaleString()}
+        ${auth && auth.username === c.username
+          ? `<button class="mv" style="font-size:12px" title="삭제" onclick="deleteComment(${c.id},${nodeId})">✕</button>` : ''}
+      </div>
+      <div style="font-size:14px;margin-top:2px;white-space:pre-wrap">${esc(c.content)}</div>
+    </div>`).join('')
+    : '<p style="color:#aaa;font-size:13px">아직 코멘트가 없습니다.</p>';
+}
+async function addComment(nodeId) {
+  const input = document.getElementById('cmt-in');
+  if (!input.value.trim()) return;
+  try {
+    await api(`/api/nodes/${nodeId}/comments`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: input.value }) });
+    input.value = ''; loadComments(nodeId);
+  } catch (e) { alert(e.detail || '로그인이 필요합니다'); }
+}
+async function deleteComment(id, nodeId) {
+  await api('/api/comments/' + id, { method: 'DELETE' }).catch(e => alert(e.detail || '삭제 실패'));
+  loadComments(nodeId);
 }
 
 function renderPrd(c) {
@@ -325,6 +400,7 @@ async function savePrd() {
   prdEditing = false; render();
 }
 
+renderAuth();
 loadAll();
 </script>
 </body>
