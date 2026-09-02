@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import secrets
 
@@ -43,6 +44,14 @@ def init_db():
             );
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS
                 project_id int REFERENCES projects(id) ON DELETE CASCADE;
+            CREATE TABLE IF NOT EXISTS versions (
+                id serial PRIMARY KEY,
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                user_id int REFERENCES users(id) ON DELETE SET NULL,
+                username text NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                data jsonb NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS images (
                 id text PRIMARY KEY,
                 project_id int REFERENCES projects(id) ON DELETE CASCADE,
@@ -346,6 +355,84 @@ def delete_node(node_id: int, share: str | None = None,
     with pool.connection() as conn, conn.cursor() as cur:
         check_access(cur, node_project(cur, node_id), user, share)
         cur.execute("DELETE FROM nodes WHERE id = %s", (node_id,))
+
+
+# ---------- versions (기능명세서 스냅샷) ----------
+NODE_FIELDS = ("id", "parent_id", "title", "description", "status", "importance", "sort_order")
+
+
+@app.post("/api/projects/{pid}/versions", status_code=201)
+def save_version(pid: int, share: str | None = None, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_access(cur, pid, user, share)
+        cur.execute(f"SELECT {', '.join(NODE_FIELDS)} FROM nodes WHERE project_id = %s"
+                    " ORDER BY sort_order, id", (pid,))
+        snapshot = rows_to_dicts(cur)
+        cur.execute("""INSERT INTO versions (project_id, user_id, username, data)
+                       VALUES (%s, %s, %s, %s) RETURNING id, created_at""",
+                    (pid, user["id"], user["username"], json.dumps(snapshot)))
+        vid, created = cur.fetchone()
+    return {"id": vid, "created_at": created, "username": user["username"],
+            "node_count": len(snapshot)}
+
+
+@app.get("/api/projects/{pid}/versions")
+def list_versions(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_access(cur, pid, user, share)
+        cur.execute("""SELECT id, username, created_at, jsonb_array_length(data) AS node_count
+                       FROM versions WHERE project_id = %s ORDER BY created_at DESC""", (pid,))
+        return rows_to_dicts(cur)
+
+
+@app.post("/api/versions/{vid}/restore")
+def restore_version(vid: int, share: str | None = None, user: dict = Depends(current_user)):
+    """스냅샷 상태로 되돌린다. 살아남는 항목은 id 를 유지해 코멘트가 보존된다."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT project_id, data FROM versions WHERE id = %s", (vid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "버전을 찾을 수 없습니다")
+        pid, snapshot = row
+        check_access(cur, pid, user, share)
+
+        by_id = {n["id"]: n for n in snapshot}
+        cur.execute("DELETE FROM nodes WHERE project_id = %s AND NOT (id = ANY(%s))",
+                    (pid, list(by_id) or [0]))
+
+        def depth(n):  # 부모를 먼저 넣어야 외래키가 걸리지 않는다
+            d, cur_n = 0, n
+            while cur_n and cur_n["parent_id"] is not None:
+                cur_n = by_id.get(cur_n["parent_id"])
+                d += 1
+            return d
+
+        for n in sorted(snapshot, key=depth):
+            cur.execute("""
+                INSERT INTO nodes (id, project_id, parent_id, title, description,
+                                   status, importance, sort_order)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    parent_id = EXCLUDED.parent_id, title = EXCLUDED.title,
+                    description = EXCLUDED.description, status = EXCLUDED.status,
+                    importance = EXCLUDED.importance, sort_order = EXCLUDED.sort_order
+                WHERE nodes.project_id = EXCLUDED.project_id""",
+                (n["id"], pid, n["parent_id"], n["title"], n["description"],
+                 n["status"], n["importance"], n["sort_order"]))
+        cur.execute("""SELECT setval(pg_get_serial_sequence('nodes', 'id'),
+                       GREATEST((SELECT coalesce(max(id), 1) FROM nodes), 1))""")
+    return {"restored": len(snapshot)}
+
+
+@app.delete("/api/versions/{vid}", status_code=204)
+def delete_version(vid: int, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT project_id FROM versions WHERE id = %s", (vid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "버전을 찾을 수 없습니다")
+        check_owner(cur, row[0], user)
+        cur.execute("DELETE FROM versions WHERE id = %s", (vid,))
 
 
 # ---------- images ----------
