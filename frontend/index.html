@@ -91,8 +91,9 @@
   #modal { position: fixed; inset: 0; background: rgba(0,0,0,.28); z-index: 200;
     display: flex; align-items: center; justify-content: center; }
   #modal[hidden] { display: none; }
-  .modal-box { background: #fff; border-radius: 12px; padding: 24px 26px; width: 540px;
-    max-width: 92vw; max-height: 80vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+  .modal-box { background: #fff; border-radius: 12px; width: min(880px, 94vw);
+    max-width: 92vw; max-height: 80vh; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+  .modal-body { padding: 24px 26px; max-height: 80vh; overflow: auto; }
   .vrow { display: flex; align-items: center; gap: 8px; padding: 11px 0; border-bottom: 1px solid #f0f0ec; }
   #toast div { background: #333; color: #fff; padding: 9px 16px; border-radius: 8px; font-size: 13px;
     box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: pre-line; }
@@ -197,7 +198,7 @@
   <div class="hgroup">
     <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="PRD & 기능명세서" height="28"></button>
     <b id="proj-name"></b>
-    <button class="btn ibtn" id="btn-glossary" onclick="openGlossary()" title="용어 사전" aria-label="용어 사전"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H4.5v16H8M16 4h3.5v16H16"/><path d="M8.5 15l2.2-6 2.2 6M9.2 13h3.1M15 15V9"/></svg></button>
+    <button class="btn ibtn" id="btn-glossary" onclick="openGlossary()" title="용어 사전" aria-label="용어 사전"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5.2 8.5 4.5 6 4.5H3v14h3c2.5 0 4.5.7 6 2 1.5-1.3 3.5-2 6-2h3v-14h-3c-2.5 0-4.5.7-6 2z"/><path d="M12 6.5v12"/></svg></button>
   </div>
   <div class="tabs" id="tabs">
     <button id="tab-prd" class="active" onclick="setTab('prd')">PRD</button>
@@ -240,7 +241,7 @@ function showModal(fn) { modalRender = fn; paintModal(); }
 function paintModal() {
   const m = document.getElementById('modal');
   if (!modalRender) return;
-  m.innerHTML = `<div class="modal-box">${modalRender()}</div>`;
+  m.innerHTML = `<div class="modal-box"><div class="modal-body">${modalRender()}</div></div>`;
   m.hidden = false;
   m.onclick = e => { if (e.target === m) closeModal(); };
 }
