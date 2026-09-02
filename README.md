@@ -15,6 +15,9 @@
 - **사용자 / 코멘트**
   - 사용자 이름 + 비밀번호로 회원가입/로그인 (PBKDF2 해시, DB 세션 토큰)
   - 로그인한 사용자는 각 기능 항목에 코멘트 작성 가능, 본인 코멘트만 삭제 가능
+- **이미지**
+  - 기능 설명·PRD 편집 중 이미지 붙여넣기(Ctrl+V), 끌어놓기, `이미지 추가` 버튼 지원
+  - 이미지는 DB(`images` 테이블)에 저장되고 `![](/api/images/<id>)` 마크다운으로 본문에 삽입됨
 - **프로젝트**
   - 사용자별로 여러 프로젝트 생성/이름 변경/삭제 (PRD와 기능 트리는 프로젝트 단위)
   - 프로젝트 소유자만 접근 가능. 소유자가 **공유 링크**(`/?share=<token>`)를 생성하면 링크를 아는 누구나 열람·편집 가능, 링크 해제 시 즉시 차단
@@ -81,6 +84,8 @@ docker compose up -d --build
 | GET / POST | `/api/projects/{pid}/nodes` | 기능 노드 목록 / 생성 (`{parent_id, title}`) |
 | PUT | `/api/nodes/{id}` | 부분 수정 (`title/description/status/importance/sort_order/parent_id`) — 순환 이동·타 프로젝트 이동은 400 |
 | DELETE | `/api/nodes/{id}` | 삭제 (하위 노드 연쇄 삭제) |
+| POST | `/api/projects/{pid}/images` | 이미지 업로드 (원본 바이트 + `Content-Type: image/*`, 5MB 이하) → `{url}` |
+| GET | `/api/images/{id}` | 업로드된 이미지 조회 |
 | POST | `/api/auth/register` | 회원가입 (`{username, password}` → `{token, username}`) |
 | POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
 | POST | `/api/auth/logout` | 로그아웃 (Bearer 토큰) |
