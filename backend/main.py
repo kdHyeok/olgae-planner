@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import secrets
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -51,6 +52,13 @@ def init_db():
                 username text NOT NULL,
                 created_at timestamptz NOT NULL DEFAULT now(),
                 data jsonb NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS terms (
+                id serial PRIMARY KEY,
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                term text NOT NULL,
+                description text NOT NULL DEFAULT '',
+                UNIQUE (project_id, term)
             );
             CREATE TABLE IF NOT EXISTS images (
                 id text PRIMARY KEY,
@@ -355,6 +363,54 @@ def delete_node(node_id: int, share: str | None = None,
     with pool.connection() as conn, conn.cursor() as cur:
         check_access(cur, node_project(cur, node_id), user, share)
         cur.execute("DELETE FROM nodes WHERE id = %s", (node_id,))
+
+
+# ---------- 용어 사전 ----------
+TERM_RE = re.compile(r"`([^`\n]{1,60})`")
+
+
+class TermIn(BaseModel):
+    description: str
+
+
+def sync_terms(cur, pid: int):
+    """본문(PRD·기능 설명)에 있는 `용어` 를 훑어 없는 건 만들고, 안 쓰이는 건 지운다."""
+    cur.execute("SELECT prd FROM projects WHERE id = %s", (pid,))
+    texts = [cur.fetchone()[0]]
+    cur.execute("SELECT description FROM nodes WHERE project_id = %s", (pid,))
+    texts += [r[0] for r in cur.fetchall()]
+
+    found = {m.strip() for t in texts for m in TERM_RE.findall(t or "")}
+    found.discard("")
+    for term in found:
+        cur.execute("""INSERT INTO terms (project_id, term) VALUES (%s, %s)
+                       ON CONFLICT (project_id, term) DO NOTHING""", (pid, term))
+    cur.execute("DELETE FROM terms WHERE project_id = %s AND NOT (term = ANY(%s))",
+                (pid, list(found) or [""]))
+
+
+@app.get("/api/projects/{pid}/terms")
+def list_terms(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_access(cur, pid, user, share)
+        sync_terms(cur, pid)
+        cur.execute("SELECT id, term, description FROM terms WHERE project_id = %s"
+                    " ORDER BY lower(term)", (pid,))
+        return rows_to_dicts(cur)
+
+
+@app.put("/api/terms/{tid}")
+def update_term(tid: int, body: TermIn, share: str | None = None,
+                user: dict | None = Depends(opt_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT project_id FROM terms WHERE id = %s", (tid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "용어를 찾을 수 없습니다")
+        check_access(cur, row[0], user, share)
+        cur.execute("UPDATE terms SET description = %s WHERE id = %s RETURNING id, term, description",
+                    (body.description, tid))
+        return rows_to_dicts(cur)[0]
 
 
 # ---------- versions (기능명세서 스냅샷) ----------
