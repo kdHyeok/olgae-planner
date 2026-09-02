@@ -25,8 +25,11 @@ def init_db():
             );
             CREATE TABLE IF NOT EXISTS sessions (
                 token text PRIMARY KEY,
-                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE
+                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at timestamptz NOT NULL DEFAULT now()
             );
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS
+                created_at timestamptz NOT NULL DEFAULT now();
             CREATE TABLE IF NOT EXISTS projects (
                 id serial PRIMARY KEY,
                 owner_id int REFERENCES users(id) ON DELETE CASCADE,
@@ -36,6 +39,7 @@ def init_db():
             );
             CREATE TABLE IF NOT EXISTS nodes (
                 id serial PRIMARY KEY,
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                 parent_id int REFERENCES nodes(id) ON DELETE CASCADE,
                 title text NOT NULL,
                 description text NOT NULL DEFAULT '',
@@ -43,6 +47,7 @@ def init_db():
                 importance int NOT NULL DEFAULT 2,
                 sort_order int NOT NULL DEFAULT 0
             );
+            -- 구버전 볼륨 업그레이드용 (새 설치에서는 no-op)
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS
                 project_id int REFERENCES projects(id) ON DELETE CASCADE;
             CREATE TABLE IF NOT EXISTS versions (
@@ -71,7 +76,7 @@ def init_db():
                 category_id int REFERENCES term_categories(id) ON DELETE SET NULL;
             CREATE TABLE IF NOT EXISTS images (
                 id text PRIMARY KEY,
-                project_id int REFERENCES projects(id) ON DELETE CASCADE,
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                 mime text NOT NULL,
                 data bytea NOT NULL,
                 created_at timestamptz NOT NULL DEFAULT now()
@@ -100,6 +105,26 @@ def init_db():
                 (owner, "기본 프로젝트", legacy_prd))
             cur.execute("UPDATE nodes SET project_id = %s WHERE project_id IS NULL",
                         (cur.fetchone()[0],))
+
+        # 정리·최적화 (모두 멱등). 이관이 끝난 뒤에만 실행되도록 마이그레이션 아래에 둔다.
+        cur.execute("""
+            ALTER TABLE nodes  ALTER COLUMN project_id SET NOT NULL;
+            ALTER TABLE images ALTER COLUMN project_id SET NOT NULL;
+            DROP TABLE IF EXISTS prd;                         -- projects.prd 로 이관 완료, 레거시
+            CREATE INDEX IF NOT EXISTS nodes_project_id_idx    ON nodes (project_id);
+            CREATE INDEX IF NOT EXISTS nodes_parent_id_idx     ON nodes (parent_id);
+            CREATE INDEX IF NOT EXISTS comments_node_id_idx    ON comments (node_id);
+            CREATE INDEX IF NOT EXISTS comments_user_id_idx    ON comments (user_id);
+            CREATE INDEX IF NOT EXISTS images_project_id_idx   ON images (project_id);
+            CREATE INDEX IF NOT EXISTS terms_project_id_idx    ON terms (project_id);
+            CREATE INDEX IF NOT EXISTS terms_category_id_idx   ON terms (category_id);
+            CREATE INDEX IF NOT EXISTS term_categories_project_id_idx ON term_categories (project_id);
+            CREATE INDEX IF NOT EXISTS versions_project_id_idx ON versions (project_id);
+            CREATE INDEX IF NOT EXISTS sessions_user_id_idx    ON sessions (user_id);
+            CREATE INDEX IF NOT EXISTS projects_owner_id_idx   ON projects (owner_id);
+            -- ponytail: 세션 만료는 기동 시 30일 지난 것만 지우는 방식. 요청마다 검사해야 하면 opt_user 에 조건 추가
+            DELETE FROM sessions WHERE created_at < now() - interval '30 days';
+        """)
 
 
 def rows_to_dicts(cur):
