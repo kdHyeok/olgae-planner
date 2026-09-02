@@ -282,7 +282,7 @@ async function saveVersion() {
 async function restoreVersion(id) {
   try {
     const r = await api(`/api/versions/${id}/restore`, { method: 'POST' });
-    nodes = await reloadNodes(); await loadTerms();
+    setNodes(await reloadNodes()); await loadTerms();
     selectedId = null; closeModal(); render();
     toast(`해당 시점으로 되돌렸습니다 (항목 ${r.restored}개)`);
   } catch (e) { toast(e.detail || '불러오기 실패'); }
@@ -363,8 +363,26 @@ async function doLogout() {
   renderAuth(); render();
 }
 
+// nodes 를 받을 때 한 번만 인덱스를 만들어 두고 재사용한다 (예전엔 호출마다 전체 배열을 훑었다)
+let kidsMap = null, nodeMap = null;
+const NO_KIDS = [];
+function setNodes(list) { nodes = list; kidsMap = nodeMap = null; }
+function buildIndex() {
+  kidsMap = new Map(); nodeMap = new Map();
+  for (const n of nodes) {
+    nodeMap.set(n.id, n);
+    const arr = kidsMap.get(n.parent_id);
+    if (arr) arr.push(n); else kidsMap.set(n.parent_id, [n]);
+  }
+  for (const arr of kidsMap.values()) arr.sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
+}
 function childrenOf(pid) {
-  return nodes.filter(n => n.parent_id === pid).sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
+  if (!kidsMap) buildIndex();
+  return kidsMap.get(pid) || NO_KIDS;
+}
+function nodeById(id) {
+  if (!nodeMap) buildIndex();
+  return nodeMap.get(id);
 }
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -652,10 +670,10 @@ function gotoPrd() { closeModal(); tab = 'prd'; render(); }
 function gotoNode(id) {
   closeModal();
   tab = 'spec';
-  const n = nodes.find(x => x.id === id);
+  const n = nodeById(id);
   if (n) {
     if (filterOn() && !impFilter.has(n.importance)) impFilter.add(n.importance);
-    for (let cur = n; cur; cur = nodes.find(x => x.id === cur.parent_id)) collapsed.delete(cur.id);
+    for (let cur = n; cur; cur = nodeById(cur.parent_id)) collapsed.delete(cur.id);
   }
   selectedId = id;
   render();
@@ -872,7 +890,7 @@ function renderAlbum() {
 }
 const impBadge = v => moscow(v).ko;
 // 0-based depth: 대분류 = 0
-function depthOf(n) { let d = 0; while (n && n.parent_id != null) { n = nodes.find(x => x.id === n.parent_id); d++; } return d; }
+function depthOf(n) { let d = 0; while (n && n.parent_id != null) { n = nodeById(n.parent_id); d++; } return d; }
 const canAddChild = n => depthOf(n) < MAX_DEPTH - 1;
 
 // ---------- drag & drop (reparent) ----------
@@ -913,7 +931,7 @@ const put = (id, body) => api('/api/nodes/' + id, { method: 'PUT',
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const subtreeHeight = n => 1 + Math.max(0, ...childrenOf(n.id).map(subtreeHeight));
 const isAncestor = (ancId, n) => {
-  for (let cur = n; cur; cur = nodes.find(x => x.id === cur.parent_id)) if (cur.id === ancId) return true;
+  for (let cur = n; cur; cur = nodeById(cur.parent_id)) if (cur.id === ancId) return true;
   return false;
 };
 
@@ -924,13 +942,13 @@ async function dropOn(e, targetId) {
   clearDropHints();
   const id = dragId; dragId = null;
   if (id == null || id === targetId) return;
-  const node = nodes.find(x => x.id === id);
-  const target = nodes.find(x => x.id === targetId);
+  const node = nodeById(id);
+  const target = nodeById(targetId);
   const newParent = zone === 'into' ? targetId : (target ? target.parent_id : null);
 
-  if (newParent != null && isAncestor(id, nodes.find(x => x.id === newParent)))
+  if (newParent != null && isAncestor(id, nodeById(newParent)))
     return toast('자기 하위 항목으로는 이동할 수 없습니다.');
-  const parentDepth = newParent == null ? -1 : depthOf(nodes.find(x => x.id === newParent));
+  const parentDepth = newParent == null ? -1 : depthOf(nodeById(newParent));
   if (parentDepth + 1 + subtreeHeight(node) > MAX_DEPTH)
     return toast(`${MAX_DEPTH}단계까지만 만들 수 있습니다.`);
 
@@ -939,17 +957,17 @@ async function dropOn(e, targetId) {
     await put(id, { parent_id: targetId });
   } else {
     if (node.parent_id !== newParent) await put(id, { parent_id: newParent });
-    nodes = await reloadNodes();
+    setNodes(await reloadNodes());
     const sibs = childrenOf(newParent).filter(x => x.id !== id);
     const at = sibs.findIndex(x => x.id === targetId) + (zone === 'after' ? 1 : 0);
-    sibs.splice(at, 0, nodes.find(x => x.id === id));
+    sibs.splice(at, 0, nodeById(id));
     await Promise.all(sibs.map((x, i) => x.sort_order === i ? null : put(x.id, { sort_order: i })));
   }
-  nodes = await reloadNodes(); render();
+  setNodes(await reloadNodes()); render();
 }
 
 async function moveNode(id, dir) {
-  const node = nodes.find(x => x.id === id);
+  const node = nodeById(id);
   const sibs = childrenOf(node.parent_id);
   const i = sibs.findIndex(s => s.id === id), j = i + dir;
   if (j < 0 || j >= sibs.length) return;
@@ -958,7 +976,7 @@ async function moveNode(id, dir) {
   await Promise.all(order.map((nid, k) =>
     api('/api/nodes/' + nid, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sort_order: k }) })));
-  nodes = await reloadNodes(); render();
+  setNodes(await reloadNodes()); render();
 }
 const MV = id => `<button class="mv" title="위로" onclick="event.stopPropagation();moveNode(${id},-1)">▲</button><button class="mv" title="아래로" onclick="event.stopPropagation();moveNode(${id},1)">▼</button>`;
 
@@ -1022,14 +1040,14 @@ function render() {
   document.getElementById('tab-prd').classList.toggle('active', tab === 'prd');
   document.getElementById('view-tree').classList.toggle('active', view === 'tree');
   document.getElementById('view-dir').classList.toggle('active', view === 'dir');
+  renderAlbum();
+  if (modalRender) paintModal();
   if (tab === 'prd') {
     renderPrd(c);
     document.getElementById('panel').classList.remove('open');
     restoreScroll();
     return;
   }
-  renderAlbum();
-  if (modalRender) paintModal();
   if (view === 'tree') {
     renderTree(c); renderPanel();
     // 빈 배경을 클릭하면 사이드 패널을 닫는다
@@ -1073,7 +1091,7 @@ async function loadProjects() { projects = auth ? await api('/api/projects').cat
 async function openProjectData() {
   const [n, p] = await Promise.all([
     api(`/api/projects/${project.id}/nodes`), api(`/api/projects/${project.id}/prd`)]);
-  nodes = n; prdContent = p.content;
+  setNodes(n); prdContent = p.content;
   await loadTerms();
 }
 async function openProject(id) {
@@ -1216,36 +1234,37 @@ function drawLinks() {
   if (!tree) return;
   const svg = tree.querySelector('svg.links');
   const tr = tree.getBoundingClientRect();
-  const roots = childrenOf(null);
-  const rootIdxOf = n => {
-    while (n.parent_id != null) n = nodes.find(x => x.id === n.parent_id);
-    return roots.findIndex(r => r.id === n.id);
+  // 카드를 한 번만 훑어 위치를 모아둔다 (노드마다 querySelector + rect 하던 것을 제거)
+  const box = new Map();
+  for (const el of tree.querySelectorAll('.node-card[data-id]')) {
+    const r = el.getBoundingClientRect();
+    box.set(el.dataset.id, { l: r.left - tr.left, r: r.right - tr.left, m: r.top + r.height / 2 - tr.top });
+  }
+  const rootIdx = new Map();          // 소속 대분류 색인: 경로를 메모해 두 번 계산하지 않는다
+  childrenOf(null).forEach((r, i) => rootIdx.set(r.id, i));
+  const colorOf = n => {
+    const chain = [];
+    let cur = n;
+    while (cur && !rootIdx.has(cur.id)) { chain.push(cur.id); cur = nodeById(cur.parent_id); }
+    const i = cur ? rootIdx.get(cur.id) : 0;
+    for (const id of chain) rootIdx.set(id, i);
+    return LINE_COLORS[(i + LINE_COLORS.length) % LINE_COLORS.length];
   };
-  let paths = '';
+  const curve = (a, b, stroke, dash) => {
+    const mx = (a.r + b.l) / 2;
+    return `<path d="M ${a.r} ${a.m} C ${mx} ${a.m}, ${mx} ${b.m}, ${b.l} ${b.m}" stroke="${stroke}" stroke-width="2" fill="none"${dash}/>`;
+  };
+  const out = [];
   for (const n of nodes) {
-    const card = tree.querySelector(`.node-card[data-id="${n.id}"]`);
-    const pcard = tree.querySelector(`.node-card[data-id="${n.parent_id == null ? 'root' : n.parent_id}"]`);
-    if (!card || !pcard) continue; // collapsed or missing
-    const ra = pcard.getBoundingClientRect(), rb = card.getBoundingClientRect();
-    const x1 = ra.right - tr.left, y1 = ra.top + ra.height / 2 - tr.top;
-    const x2 = rb.left - tr.left, y2 = rb.top + rb.height / 2 - tr.top;
-    const mx = (x1 + x2) / 2;
-    const color = LINE_COLORS[(rootIdxOf(n) + LINE_COLORS.length) % LINE_COLORS.length];
-    paths += `<path d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" stroke="${color}" stroke-width="2" fill="none"/>`;
+    const b = box.get(String(n.id));
+    const a = box.get(n.parent_id == null ? 'root' : String(n.parent_id));
+    if (a && b) out.push(curve(a, b, colorOf(n), ''));
   }
-  const ghost = tree.querySelector('.node-card[data-id="ghost"]');
-  const rootCard = tree.querySelector('.node-card[data-id="root"]');
-  if (ghost && rootCard) {
-    const ra = rootCard.getBoundingClientRect(), rb = ghost.getBoundingClientRect();
-    const x1 = ra.right - tr.left, y1 = ra.top + ra.height / 2 - tr.top;
-    const x2 = rb.left - tr.left, y2 = rb.top + rb.height / 2 - tr.top;
-    const mx = (x1 + x2) / 2;
-    paths += `<path d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" stroke="#dcdcd6"
-      stroke-width="2" stroke-dasharray="5 5" fill="none"/>`;
-  }
+  const ghost = box.get('ghost'), rootCard = box.get('root');
+  if (ghost && rootCard) out.push(curve(rootCard, ghost, '#dcdcd6', ' stroke-dasharray="5 5"'));
   svg.setAttribute('width', tree.scrollWidth);
   svg.setAttribute('height', tree.scrollHeight);
-  svg.innerHTML = paths;
+  svg.innerHTML = out.join('');
 }
 window.addEventListener('resize', drawLinks);
 
@@ -1269,7 +1288,7 @@ function renderDir(c) {
     `<div class="dir-group">${item(g, num, 0)}</div>`).join('')
     || `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : ''}</p>`;
   const addRow = `<div class="dir-item dir-ghost" onclick="addNode(null)" title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</div>`;
-  const sel = nodes.find(n => n.id === selectedId);
+  const sel = nodeById(selectedId);
   const detail = sel ? detailBody(sel, false)
     : '<p style="color:#aaa;margin-top:40px">왼쪽 목록에서 항목을 선택하세요.</p>';
   c.innerHTML = `<div class="dir"><div class="dir-list" ${DROP(null)} title="빈 곳에 드롭하면 대분류가 됩니다">${list}${addRow}</div><div class="dir-detail">${detail}</div></div>`;
@@ -1278,7 +1297,7 @@ function renderDir(c) {
 
 function renderPanel() {
   const p = document.getElementById('panel');
-  const n = nodes.find(x => x.id === selectedId);
+  const n = nodeById(selectedId);
   if (!n) { p.classList.remove('open'); return; }
   p.classList.add('open');
   p.innerHTML = detailBody(n, true);
@@ -1325,7 +1344,7 @@ function descClick(e, el, id) {
 
 // swap the rendered field for an editor in place; blur/Ctrl+Enter saves, Esc cancels
 function editField(el, id, field) {
-  const n = nodes.find(x => x.id === id);
+  const n = nodeById(id);
   const multiline = field === 'description';
   const box = document.createElement(multiline ? 'textarea' : 'input');
   box.className = 'inline-edit' + (field === 'title' ? ' title-edit' : '');
@@ -1358,7 +1377,7 @@ function editField(el, id, field) {
 async function saveField(id, field, value) {
   await api('/api/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ [field]: value }) });
-  nodes = await reloadNodes();
+  setNodes(await reloadNodes());
   if (field === 'description') await loadTerms();
   render();
 }
@@ -1450,10 +1469,30 @@ function prdClickEdit(e) {
 // ---------- actions ----------
 function setTab(t) { tab = t; render(); }
 function setView(v) { view = v; render(); }
-function select(id) { selectedId = selectedId === id ? null : id; render(); }
-function closePanel() { selectedId = null; render(); }
+function select(id) { selectedId = selectedId === id ? null : id; applySelection(); }
+function closePanel() { selectedId = null; applySelection(); }
+// 선택만 바뀐 경우: 트리/목록 전체를 다시 만들지 않고 표시와 상세만 갱신한다
+function applySelection() {
+  if (!project || tab !== 'spec') return render();
+  const on = document.querySelectorAll('.node-card.selected, .dir-item.selected');
+  if (!on.length && selectedId == null) { /* 바뀔 것이 없다 */ }
+  on.forEach(el => el.classList.remove('selected'));
+  if (selectedId != null)
+    document.querySelectorAll(`.node-card[data-id="${selectedId}"], .dir-item[data-id="${selectedId}"]`)
+      .forEach(el => el.classList.add('selected'));
+  if (view === 'tree') { renderPanel(); drawLinks(); }   // 패널 폭이 바뀌면 곡선도 다시 그린다
+  else renderDirDetail();
+}
+function renderDirDetail() {
+  const box = document.querySelector('.dir-detail');
+  if (!box) return render();
+  const sel = nodeById(selectedId);
+  box.innerHTML = sel ? detailBody(sel, false)
+    : '<p style="color:#aaa;margin-top:40px">왼쪽 목록에서 항목을 선택하세요.</p>';
+  if (sel) loadComments(sel.id);
+}
 function toggleCollapse(id) { collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); render(); }
-const hasKids = id => nodes.some(n => n.parent_id === id);
+const hasKids = id => childrenOf(id).length > 0;
 function collapseAll() { collapsed = new Set(nodes.filter(n => hasKids(n.id)).map(n => n.id)); render(); }
 function expandAll() { collapsed = new Set(); render(); }
 
@@ -1477,7 +1516,7 @@ const reloadNodes = () => api(`/api/projects/${project.id}/nodes`);
 async function addNode(parentId) {
   const n = await api(`/api/projects/${project.id}/nodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ parent_id: parentId, title: parentId ? '새 하위 기능' : '새 대분류' }) });
-  nodes = await reloadNodes();
+  setNodes(await reloadNodes());
   // 새 항목의 중요도가 필터에서 꺼져 있으면 보이도록 켜 준다
   if (filterOn() && !impFilter.has(n.importance)) {
     impFilter.add(n.importance);
@@ -1491,7 +1530,7 @@ async function addNode(parentId) {
 async function removeNode(id) {
   await api('/api/nodes/' + id, { method: 'DELETE' });
   if (selectedId === id) selectedId = null;
-  nodes = await reloadNodes(); await loadTerms(); render();
+  setNodes(await reloadNodes()); await loadTerms(); render();
 }
 async function savePrd() {
   prdContent = document.getElementById('prd-edit').value;
