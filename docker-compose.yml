@@ -17,6 +17,10 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql://app:app@db:5432/app
+      # /mcp 의 Host 검사(DNS 리바인딩 방어). 배포 시 도메인을 넣는다.
+      #   MCP_ALLOWED_HOSTS=prd.example.com docker compose up -d
+      # 콤마로 여러 개 지정 가능. 빈 값으로 두면 검사를 끈다.
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS-localhost:3000,127.0.0.1:3000}
     depends_on:
       db:
         condition: service_healthy
