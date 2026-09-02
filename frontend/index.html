@@ -8,7 +8,21 @@
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background: #f4f4f2; color: #333; }
   header { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e5e5e0; }
-  header h1 { font-size: 18px; }
+  header { flex-wrap: nowrap; }
+  header h1 { font-size: 18px; display: flex; align-items: center; color: #444; }
+  #proj-name { white-space: nowrap; }
+  .ibtn { display: inline-flex; align-items: center; justify-content: center;
+    width: 42px; height: 36px; padding: 0 !important; flex: none; }
+  .ibtn svg { flex: none; }
+  .logo-btn { width: 48px; height: 38px; }
+  .logo-btn img { display: block; }
+  .ibtn.plain { border-color: transparent; background: transparent; cursor: default; }
+  .ghost { border: 1px dashed #cfcfc8 !important; background: rgba(255,255,255,.5) !important;
+    color: #b0b0a8; box-shadow: none !important; font-size: 13px; }
+  .ghost:hover { color: #555; border-color: #9a9a93 !important; background: #fff !important; }
+  .dir-ghost { color: #b0b0a8; border: 1px dashed #d8d8d2; border-radius: 6px; margin: 8px 0 4px;
+    justify-content: center; font-size: 13px; }
+  .dir-ghost:hover { color: #555; border-color: #9a9a93; }
   .tabs button, .viewtoggle button {
     border: 1px solid #ddd; background: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 14px;
   }
@@ -45,7 +59,9 @@
   .imp2 { background: #f1e6d9; color: #9c7647; }  /* 권장 Should */
   .imp3 { background: #f2eecf; color: #8d873f; }  /* 선택 Could */
   .imp4 { background: #ebebe9; color: #8a8a84; }  /* 보류 Won't */
-  #impfilter { position: relative; }
+  #impfilter, #moremenu { position: relative; }
+  .fitem.act { cursor: pointer; }
+  .fitem.act small { color: #aaa; font-size: 11px; }
   .fmenu { position: absolute; top: 100%; left: 0; margin-top: 6px; background: #fff; border: 1px solid #e0e0db;
     border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.10); padding: 6px; z-index: 30; min-width: 190px; }
   .fitem { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
@@ -109,20 +125,19 @@
 </head>
 <body>
 <header>
-  <h1>PRD & 기능명세서</h1>
-  <button class="btn" id="btn-projects" onclick="goProjects()">내 프로젝트</button>
+  <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="PRD & 기능명세서" height="28"></button>
   <b id="proj-name" style="font-size:15px;color:#444"></b>
   <div class="tabs" id="tabs">
-    <button id="tab-spec" class="active" onclick="setTab('spec')">기능명세서</button>
     <button id="tab-prd" onclick="setTab('prd')">PRD</button>
+    <button id="tab-spec" class="active" onclick="setTab('spec')">기능명세서</button>
   </div>
   <div class="viewtoggle" id="viewtoggle">
-    <button id="view-tree" class="active" onclick="setView('tree')">트리 뷰</button>
-    <button id="view-dir" onclick="setView('dir')">디렉토리 뷰</button>
+    <button id="view-tree" class="active ibtn" onclick="setView('tree')" title="트리 뷰" aria-label="트리 뷰"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4"/><path d="M8 6h3v12H8"/><path d="M11 6h2M11 12h2M11 18h2"/><circle cx="4" cy="12" r="1.6" fill="currentColor"/><rect x="13" y="3.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="9.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="15.6" width="7" height="4.8" rx="1.6"/></svg></button>
+    <button id="view-dir" class="ibtn" onclick="setView('dir')" title="디렉토리 뷰" aria-label="디렉토리 뷰"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.4" fill="currentColor"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor"/><circle cx="4.5" cy="18" r="1.4" fill="currentColor"/></svg></button>
   </div>
-  <button class="btn" id="add-root" onclick="addNode(null)">+ 대분류 추가</button>
   <div id="impfilter" style="display:flex;gap:4px;align-items:center"></div>
   <div id="authbox" style="margin-left:auto;display:flex;gap:6px;align-items:center"></div>
+  <div id="moremenu"></div>
 </header>
 <div id="toast"></div>
 <main>
@@ -171,7 +186,7 @@ function renderAuth() {
   const el = document.getElementById('authbox');
   el.innerHTML = auth
     ? `<span style="font-size:14px;color:#555"><b>${esc(auth.username)}</b> 님</span>
-       <button class="btn" onclick="doLogout()">로그아웃</button>`
+       <button class="btn danger ibtn" onclick="doLogout()" title="로그아웃" aria-label="로그아웃"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/></svg></button>`
     : `<input type="text" id="au-id" placeholder="사용자 이름" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px">
        <input type="password" id="au-pw" placeholder="비밀번호" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px"
          onkeydown="if(event.key==='Enter')doLogin()">
@@ -302,7 +317,8 @@ const impSelect = n => `<select class="impsel imp${n.importance}" title="중요�
 const shownChildren = (pid, prefix) => childrenOf(pid)
   .map((k, i) => [k, prefix ? prefix + '.' + (i + 1) : String(i + 1)])
   .filter(([k]) => matchesFilter(k));
-let filterOpen = false;
+let filterOpen = false, moreOpen = false;
+function toggleMore() { moreOpen = !moreOpen; render(); }
 function toggleFilterMenu() { filterOpen = !filterOpen; render(); }
 function toggleImp(v) {
   impFilter.has(v) ? impFilter.delete(v) : impFilter.add(v);
@@ -311,11 +327,46 @@ function toggleImp(v) {
 function setAllImp(on) { impFilter = new Set(on ? MOSCOW.map(m => m.v) : []); render(); }
 // 바깥을 클릭하면 메뉴를 닫는다
 document.addEventListener('click', e => {
-  if (!filterOpen) return;
+  if (!filterOpen && !moreOpen) return;
   // 다시 그리면서 교체된 요소의 클릭은 '바깥 클릭'이 아니다
   if (!e.target.isConnected) return;
-  if (!e.target.closest('#impfilter')) { filterOpen = false; render(); }
+  let changed = false;
+  if (filterOpen && !e.target.closest('#impfilter')) { filterOpen = false; changed = true; }
+  if (moreOpen && !e.target.closest('#moremenu')) { moreOpen = false; changed = true; }
+  if (changed) render();
 });
+
+// ---------- 내보내기 / 이미지 정리 ----------
+function exportMarkdown() {
+  const abs = t => t.replace(/\]\(\/api\/images\//g, '](' + location.origin + '/api/images/');
+  const out = [`# ${project.name}`, '', '## PRD', '', abs(prdContent.trim()), '', '---', '', '## 기능명세서', ''];
+  const walk = (pid, prefix, depth) => childrenOf(pid).forEach((n, i) => {
+    const num = prefix ? `${prefix}.${i + 1}` : String(i + 1);
+    out.push(`${'#'.repeat(Math.min(depth + 3, 6))} ${num} ${n.title}`, '');
+    out.push(`- 상태: ${n.status}`, `- 중요도: ${moscow(n.importance).ko} (${moscow(n.importance).en})`, '');
+    if (n.description.trim()) out.push(abs(n.description.trim()), '');
+    walk(n.id, num, depth + 1);
+  });
+  walk(null, '', 0);
+  const blob = new Blob([out.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${project.name}.md`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  moreOpen = false; render();
+  toast('마크다운 파일을 내려받았습니다.');
+}
+
+async function cleanupImages() {
+  moreOpen = false; render();
+  try {
+    const r = await api(`/api/projects/${project.id}/images/cleanup`, { method: 'POST' });
+    toast(r.deleted
+      ? `미사용 이미지 ${r.deleted}개(${(r.bytes / 1024).toFixed(0)}KB)를 정리했습니다.`
+      : '정리할 미사용 이미지가 없습니다.');
+  } catch (e) { toast(e.detail || '이미지 정리 실패'); }
+}
 const impBadge = v => moscow(v).ko;
 // 0-based depth: 대분류 = 0
 function depthOf(n) { let d = 0; while (n && n.parent_id != null) { n = nodes.find(x => x.id === n.parent_id); d++; } return d; }
@@ -414,10 +465,20 @@ function render() {
   c.onclick = null;
   const has = !!project;
   document.getElementById('proj-name').textContent = has ? project.name : '';
-  document.getElementById('btn-projects').style.display = auth && !shareToken ? '' : 'none';
+  const homeBtn = document.getElementById('btn-projects');
+  const canHome = !!auth && !shareToken;
+  homeBtn.onclick = canHome ? goProjects : null;
+  homeBtn.title = canHome ? '내 프로젝트' : 'PRD & 기능명세서';
+  homeBtn.classList.toggle('plain', !canHome);
   document.getElementById('tabs').style.display = has ? '' : 'none';
   document.getElementById('viewtoggle').style.display = has && tab === 'spec' ? '' : 'none';
-  document.getElementById('add-root').style.display = has && tab === 'spec' ? '' : 'none';
+  const mEl = document.getElementById('moremenu');
+  mEl.style.display = has ? 'block' : 'none';
+  mEl.innerHTML = has ? `<button class="btn ibtn" onclick="event.stopPropagation();toggleMore()" title="메뉴" aria-label="메뉴"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    ${moreOpen ? `<div class="fmenu" style="left:auto;right:0;min-width:210px">
+      <div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>
+      ${shareToken ? '' : `<div class="fitem act" onclick="cleanupImages()">미사용 이미지 정리<br><small>본문에서 참조하지 않는 이미지 삭제</small></div>`}
+    </div>` : ''}` : '';
   const fEl = document.getElementById('impfilter');
   fEl.style.display = has && tab === 'spec' ? 'flex' : 'none';
   const label = !filterOn() ? '전체' : (MOSCOW.filter(m => impFilter.has(m.v)).map(m => m.ko).join(', ') || '없음');
@@ -560,8 +621,11 @@ function renderTree(c) {
   c.innerHTML = `<div class="tree"><svg class="links"></svg><div class="mm-branch">
     <span class="node-card mm-root" data-id="root" ${DROP(null)} title="여기에 드롭하면 대분류가 됩니다">PRD</span>
     <div class="mm-children">${roots.map(([n, num], i) =>
-      `<div class="mm-child">${branch(n, num, 0, i)}</div>`).join('') ||
-      `<div class="mm-child"><span style="color:#aaa">${empty}</span></div>`}</div>
+      `<div class="mm-child">${branch(n, num, 0, i)}</div>`).join('')}
+      ${roots.length || filterOn() ? '' : `<div class="mm-child"><span style="color:#aaa">${empty}</span></div>`}
+      ${filterOn() ? '' : `<div class="mm-child">
+        <span class="node-card ghost" data-id="ghost" onclick="addNode(null)"
+          title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</span></div>`}</div>
   </div></div>`;
   drawLinks();
 }
@@ -589,6 +653,16 @@ function drawLinks() {
     const color = LINE_COLORS[(rootIdxOf(n) + LINE_COLORS.length) % LINE_COLORS.length];
     paths += `<path d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" stroke="${color}" stroke-width="2" fill="none"/>`;
   }
+  const ghost = tree.querySelector('.node-card[data-id="ghost"]');
+  const rootCard = tree.querySelector('.node-card[data-id="root"]');
+  if (ghost && rootCard) {
+    const ra = rootCard.getBoundingClientRect(), rb = ghost.getBoundingClientRect();
+    const x1 = ra.right - tr.left, y1 = ra.top + ra.height / 2 - tr.top;
+    const x2 = rb.left - tr.left, y2 = rb.top + rb.height / 2 - tr.top;
+    const mx = (x1 + x2) / 2;
+    paths += `<path d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" stroke="#dcdcd6"
+      stroke-width="2" stroke-dasharray="5 5" fill="none"/>`;
+  }
   svg.setAttribute('width', tree.scrollWidth);
   svg.setAttribute('height', tree.scrollHeight);
   svg.innerHTML = paths;
@@ -605,11 +679,13 @@ function renderDir(c) {
       </div>` + shownChildren(n.id, num).map(([k, kn]) => item(k, kn, depth + 1)).join('');
   const list = shownChildren(null, '').map(([g, num]) =>
     `<div class="dir-group">${item(g, num, 0)}</div>`).join('')
-    || `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : '항목이 없습니다.'}</p>`;
+    || `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : ''}</p>`;
+  const addRow = filterOn() ? ''
+    : `<div class="dir-item dir-ghost" onclick="addNode(null)" title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</div>`;
   const sel = nodes.find(n => n.id === selectedId);
   const detail = sel ? detailBody(sel, false)
     : '<p style="color:#aaa;margin-top:40px">왼쪽 목록에서 항목을 선택하세요.</p>';
-  c.innerHTML = `<div class="dir"><div class="dir-list" ${DROP(null)} title="빈 곳에 드롭하면 대분류가 됩니다">${list}</div><div class="dir-detail">${detail}</div></div>`;
+  c.innerHTML = `<div class="dir"><div class="dir-list" ${DROP(null)} title="빈 곳에 드롭하면 대분류가 됩니다">${list}${addRow}</div><div class="dir-detail">${detail}</div></div>`;
   if (sel) loadComments(sel.id);
 }
 

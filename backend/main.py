@@ -371,6 +371,27 @@ async def upload_image(pid: int, request: Request, share: str | None = None,
     return {"url": f"/api/images/{img_id}"}
 
 
+@app.post("/api/projects/{pid}/images/cleanup")
+def cleanup_images(pid: int, user: dict = Depends(current_user)):
+    """본문(PRD·기능 설명)에서 더 이상 참조하지 않는 이미지를 지운다."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_owner(cur, pid, user)
+        cur.execute("""
+            DELETE FROM images AS i
+            WHERE i.project_id = %s
+              -- 방금 붙여넣고 아직 저장하지 않은 이미지는 건드리지 않는다
+              AND i.created_at < now() - interval '1 hour'
+              AND NOT EXISTS (SELECT 1 FROM projects p
+                              WHERE p.id = i.project_id
+                                AND position('/api/images/' || i.id in p.prd) > 0)
+              AND NOT EXISTS (SELECT 1 FROM nodes n
+                              WHERE n.project_id = i.project_id
+                                AND position('/api/images/' || i.id in n.description) > 0)
+            RETURNING length(data)""", (pid,))
+        sizes = [r[0] for r in cur.fetchall()]
+    return {"deleted": len(sizes), "bytes": sum(sizes)}
+
+
 @app.get("/api/images/{img_id}")
 def get_image(img_id: str):
     with pool.connection() as conn, conn.cursor() as cur:
