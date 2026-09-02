@@ -7,10 +7,18 @@
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background: #f4f4f2; color: #333; }
-  header { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e5e5e0; }
-  header { flex-wrap: nowrap; }
+  header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
+    padding: 12px 24px; background: #fff; border-bottom: 1px solid #e5e5e0; }
+  .hgroup { display: flex; align-items: center; gap: 10px; }
+  .hgroup > *, .tabs > *, .viewtoggle > * { flex: none; }
+  .tabs, .viewtoggle { display: flex; gap: 6px; }
+  header button, #proj-name, #impfilter { white-space: nowrap; }
+  .hgroup.right { justify-content: flex-end; }
   header h1 { font-size: 18px; display: flex; align-items: center; color: #444; }
-  #proj-name { white-space: nowrap; }
+  #proj-name { white-space: nowrap; font-size: 15px; font-weight: 700; color: #444;
+    padding: 4px 8px; border-radius: 6px; }
+  #proj-name.editable { cursor: text; }
+  #proj-name.editable:hover { background: #f2f2ef; }
   .ibtn { display: inline-flex; align-items: center; justify-content: center;
     width: 42px; height: 36px; padding: 0 !important; flex: none; }
   .ibtn svg { flex: none; }
@@ -28,7 +36,10 @@
   }
   .tabs button.active, .viewtoggle button.active { background: #333; color: #fff; border-color: #333; }
   main { display: flex; height: calc(100vh - 57px); }
+  #contentwrap { flex: 1; min-width: 0; position: relative; display: flex; }
   #content { flex: 1; overflow: auto; padding: 24px; }
+  #contenttools { position: absolute; top: 12px; right: 18px; z-index: 20; display: flex; gap: 8px; align-items: center; }
+  #contenttools > * { flex: none; }
   /* ---- tree view (horizontal mindmap) ---- */
   .tree { display: flex; align-items: center; min-height: 100%; padding: 20px; width: max-content; }
   .mm-branch { display: flex; align-items: center; }
@@ -75,6 +86,12 @@
   .drop-after { box-shadow: 0 3px 0 0 #6b7fd7 !important; }
   #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 100;
     display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.28); z-index: 200;
+    display: flex; align-items: center; justify-content: center; }
+  #modal[hidden] { display: none; }
+  .modal-box { background: #fff; border-radius: 12px; padding: 24px 26px; width: 540px;
+    max-width: 92vw; max-height: 80vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+  .vrow { display: flex; align-items: center; gap: 8px; padding: 11px 0; border-bottom: 1px solid #f0f0ec; }
   #toast div { background: #333; color: #fff; padding: 9px 16px; border-radius: 8px; font-size: 13px;
     box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: pre-line; }
   .node-card:hover .grip, .dir-item:hover .grip { color: #8f8f89; }
@@ -125,30 +142,103 @@
 </head>
 <body>
 <header>
-  <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="PRD & 기능명세서" height="28"></button>
-  <b id="proj-name" style="font-size:15px;color:#444"></b>
+  <div class="hgroup">
+    <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="PRD & 기능명세서" height="28"></button>
+    <b id="proj-name"></b>
+  </div>
   <div class="tabs" id="tabs">
-    <button id="tab-prd" onclick="setTab('prd')">PRD</button>
-    <button id="tab-spec" class="active" onclick="setTab('spec')">기능명세서</button>
+    <button id="tab-prd" class="active" onclick="setTab('prd')">PRD</button>
+    <button id="tab-spec" onclick="setTab('spec')">기능명세서</button>
   </div>
-  <div class="viewtoggle" id="viewtoggle">
-    <button id="view-tree" class="active ibtn" onclick="setView('tree')" title="트리 뷰" aria-label="트리 뷰"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4"/><path d="M8 6h3v12H8"/><path d="M11 6h2M11 12h2M11 18h2"/><circle cx="4" cy="12" r="1.6" fill="currentColor"/><rect x="13" y="3.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="9.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="15.6" width="7" height="4.8" rx="1.6"/></svg></button>
-    <button id="view-dir" class="ibtn" onclick="setView('dir')" title="디렉토리 뷰" aria-label="디렉토리 뷰"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.4" fill="currentColor"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor"/><circle cx="4.5" cy="18" r="1.4" fill="currentColor"/></svg></button>
+  <div class="hgroup right">
+    <div id="authbox" style="display:flex;gap:6px;align-items:center"></div>
+    <div id="moremenu"></div>
   </div>
-  <div id="impfilter" style="display:flex;gap:4px;align-items:center"></div>
-  <div id="authbox" style="margin-left:auto;display:flex;gap:6px;align-items:center"></div>
-  <div id="moremenu"></div>
 </header>
 <div id="toast"></div>
+<div id="modal" hidden></div>
 <main>
-  <div id="content"></div>
+  <div id="contentwrap">
+    <div id="contenttools">
+      <div class="viewtoggle" id="viewtoggle">
+        <button id="view-tree" class="active ibtn" onclick="setView('tree')" title="트리 뷰" aria-label="트리 뷰"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4"/><path d="M8 6h3v12H8"/><path d="M11 6h2M11 12h2M11 18h2"/><circle cx="4" cy="12" r="1.6" fill="currentColor"/><rect x="13" y="3.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="9.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="15.6" width="7" height="4.8" rx="1.6"/></svg></button>
+        <button id="view-dir" class="ibtn" onclick="setView('dir')" title="디렉토리 뷰" aria-label="디렉토리 뷰"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.4" fill="currentColor"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor"/><circle cx="4.5" cy="18" r="1.4" fill="currentColor"/></svg></button>
+    </div>
+      <div id="impfilter" style="display:flex;gap:4px;align-items:center"></div>
+    </div>
+    <div id="content"></div>
+  </div>
   <aside id="panel"></aside>
 </main>
 <script>
 const STATUSES = ['기획 작성중', '기획 완료', '개발 중', '완료'];
 const MAX_DEPTH = 4;  // 대분류 > 중분류 > 소분류 > 세부
-let tab = 'spec', view = 'tree', nodes = [], selectedId = null, collapsed = new Set(), prdContent = '', prdEditing = false;
+let tab = 'prd', view = 'tree', nodes = [], selectedId = null, collapsed = new Set(), prdContent = '', prdEditing = false;
 let project = null, projects = [];
+let modalRender = null;
+function showModal(fn) { modalRender = fn; paintModal(); }
+function paintModal() {
+  const m = document.getElementById('modal');
+  if (!modalRender) return;
+  m.innerHTML = `<div class="modal-box">${modalRender()}</div>`;
+  m.hidden = false;
+  m.onclick = e => { if (e.target === m) closeModal(); };
+}
+function closeModal() {
+  modalRender = null;
+  const m = document.getElementById('modal');
+  m.hidden = true; m.innerHTML = '';
+}
+
+// ---------- 기능명세서 버전 기록 ----------
+let versions = [];
+function versionsHTML() {
+  return `<h3 style="margin-bottom:6px">기능명세서 버전 기록</h3>
+    <p class="hint" style="margin:0 0 16px">현재 상태를 저장해 두고 언제든 그 시점으로 되돌릴 수 있습니다.</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn primary" onclick="saveVersion()">현재 상태 저장</button>
+      <button class="btn" onclick="closeModal()">닫기</button>
+    </div>
+    ${versions.length ? versions.map(v => `
+      <div class="vrow">
+        <div style="flex:1">
+          <b>${new Date(v.created_at).toLocaleString()}</b>
+          <div style="font-size:12px;color:#888">${esc(v.username)} · 항목 ${v.node_count}개</div>
+        </div>
+        <button class="btn" onclick="twoStep('vres:${v.id}', () => restoreVersion(${v.id}))">${askLabel('vres:' + v.id, '불러오기')}</button>
+        <button class="btn danger" onclick="twoStep('vdel:${v.id}', () => deleteVersion(${v.id}))">${askLabel('vdel:' + v.id, '삭제')}</button>
+      </div>`).join('')
+    : '<p style="color:#aaa;padding:14px 0">저장된 버전이 없습니다.</p>'}`;
+}
+async function openVersions() {
+  moreOpen = false; render();
+  versions = await api(`/api/projects/${project.id}/versions`).catch(() => []);
+  showModal(versionsHTML);
+}
+async function saveVersion() {
+  try {
+    const v = await api(`/api/projects/${project.id}/versions`, { method: 'POST' });
+    versions = await api(`/api/projects/${project.id}/versions`);
+    paintModal();
+    toast(`버전을 저장했습니다 (항목 ${v.node_count}개)`);
+  } catch (e) { toast(e.detail || '버전 저장 실패'); }
+}
+async function restoreVersion(id) {
+  try {
+    const r = await api(`/api/versions/${id}/restore`, { method: 'POST' });
+    nodes = await reloadNodes();
+    selectedId = null; closeModal(); render();
+    toast(`해당 시점으로 되돌렸습니다 (항목 ${r.restored}개)`);
+  } catch (e) { toast(e.detail || '불러오기 실패'); }
+}
+async function deleteVersion(id) {
+  try {
+    await api('/api/versions/' + id, { method: 'DELETE' });
+    versions = await api(`/api/projects/${project.id}/versions`);
+    paintModal();
+  } catch (e) { toast(e.detail || '버전 삭제 실패'); }
+}
+
 function toast(msg) {
   const box = document.getElementById('toast');
   const el = document.createElement('div');
@@ -464,7 +554,12 @@ function render() {
   const c = document.getElementById('content');
   c.onclick = null;
   const has = !!project;
-  document.getElementById('proj-name').textContent = has ? project.name : '';
+  if (!editingName) document.getElementById('proj-name').textContent = has ? project.name : '';
+  const nameEl = document.getElementById('proj-name');
+  const canRename = has && !!auth && !shareToken;
+  nameEl.classList.toggle('editable', canRename);
+  nameEl.onclick = canRename ? editProjectName : null;
+  nameEl.title = canRename ? '클릭하여 이름 수정' : '';
   const homeBtn = document.getElementById('btn-projects');
   const canHome = !!auth && !shareToken;
   homeBtn.onclick = canHome ? goProjects : null;
@@ -476,11 +571,12 @@ function render() {
   mEl.style.display = has ? 'block' : 'none';
   mEl.innerHTML = has ? `<button class="btn ibtn" onclick="event.stopPropagation();toggleMore()" title="메뉴" aria-label="메뉴"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     ${moreOpen ? `<div class="fmenu" style="left:auto;right:0;min-width:210px">
+      ${auth ? `<div class="fitem act" onclick="openVersions()">기능명세서 버전 기록<br><small>현재 상태 저장 · 이전 시점으로 되돌리기</small></div>` : ''}
       <div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>
       ${shareToken ? '' : `<div class="fitem act" onclick="cleanupImages()">미사용 이미지 정리<br><small>본문에서 참조하지 않는 이미지 삭제</small></div>`}
     </div>` : ''}` : '';
+  document.getElementById('contenttools').style.display = has && tab === 'spec' ? 'flex' : 'none';
   const fEl = document.getElementById('impfilter');
-  fEl.style.display = has && tab === 'spec' ? 'flex' : 'none';
   const label = !filterOn() ? '전체' : (MOSCOW.filter(m => impFilter.has(m.v)).map(m => m.ko).join(', ') || '없음');
   fEl.innerHTML = `<button class="btn" onclick="event.stopPropagation();toggleFilterMenu()">중요도: ${label} ▾</button>
     ${filterOpen ? `<div class="fmenu">
@@ -497,6 +593,7 @@ function render() {
   document.getElementById('view-tree').classList.toggle('active', view === 'tree');
   document.getElementById('view-dir').classList.toggle('active', view === 'dir');
   if (tab === 'prd') { renderPrd(c); document.getElementById('panel').classList.remove('open'); return; }
+  if (modalRender) paintModal();
   if (view === 'tree') {
     renderTree(c); renderPanel();
     // 빈 배경을 클릭하면 사이드 패널을 닫는다
@@ -552,7 +649,44 @@ async function createProject() {
   await loadProjects(); render();
   renameProject(np.id);
 }
-// 프로젝트 이름을 그 자리에서 편집
+// 헤더의 프로젝트 이름을 그 자리에서 편집
+let editingName = false;
+function editProjectName() {
+  if (editingName) return;
+  const el = document.getElementById('proj-name');
+  const box = document.createElement('input');
+  box.className = 'inline-edit';
+  box.style.cssText = 'width:200px;font-size:15px;font-weight:700';
+  box.value = project.name;
+  editingName = true;
+  el.textContent = '';
+  el.appendChild(box);          // 요소를 통째로 바꾸지 않는다 (render 가 참조함)
+  box.focus(); box.select();
+  let done = false;
+  const finish = async save => {
+    if (done) return;
+    done = true;
+    const name = box.value.trim();
+    if (save && name && name !== project.name) {
+      try {
+        await api('/api/projects/' + project.id, { method: 'PUT',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+        project.name = name;
+        await loadProjects();
+        project = projects.find(x => x.id === project.id) || project;
+      } catch (e) { toast(e.detail || '이름 변경 실패'); }
+    }
+    editingName = false;
+    render();
+  };
+  box.addEventListener('blur', () => finish(true));
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Escape') finish(false);
+    else if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+  });
+}
+
+// 프로젝트 목록에서 이름을 그 자리에서 편집
 function renameProject(id) {
   const el = document.querySelector(`[data-pname="${id}"]`);
   const cur = projects.find(p => p.id === id);

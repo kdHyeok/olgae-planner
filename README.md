@@ -21,6 +21,10 @@
   - 기능 설명·PRD 편집 중 이미지 붙여넣기(Ctrl+V), 끌어놓기, `이미지 추가` 버튼 지원
   - 이미지는 DB(`images` 테이블)에 저장되고 `![](/api/images/<id>)` 마크다운으로 본문에 삽입됨
   - 헤더 `⋯` 메뉴의 **미사용 이미지 정리**로 본문에서 참조하지 않는 이미지 삭제 (업로드 후 1시간 이내 이미지는 보호)
+- **버전 기록 (기능명세서)**
+  - 헤더 메뉴 → `기능명세서 버전 기록`에서 현재 트리 상태를 스냅샷으로 저장
+  - 목록에 **저장 일시 · 저장한 사용자 · 항목 수** 표시, `불러오기`로 그 시점으로 복원(두 번 클릭 확인)
+  - 복원 시 살아남는 항목은 id 를 유지해 해당 항목의 코멘트가 보존됨
 - **내보내기**
   - 헤더 `⋯` 메뉴의 **마크다운으로 내보내기** → PRD + 기능명세서 전체를 `<프로젝트명>.md` 파일로 저장
   - 기능은 번호가 매겨진 헤딩(`### 1`, `#### 1.1`)과 상태·중요도 목록으로 출력, 이미지 주소는 절대경로로 변환
@@ -92,6 +96,9 @@ docker compose up -d --build
 | DELETE | `/api/nodes/{id}` | 삭제 (하위 노드 연쇄 삭제) |
 | POST | `/api/projects/{pid}/images` | 이미지 업로드 (원본 바이트 + `Content-Type: image/*`, 5MB 이하) → `{url}` |
 | GET | `/api/images/{id}` | 업로드된 이미지 조회 |
+| GET / POST | `/api/projects/{pid}/versions` | 버전 목록 / 현재 기능명세서 스냅샷 저장 (로그인 필요) |
+| POST | `/api/versions/{vid}/restore` | 해당 버전으로 복원 (로그인 필요) |
+| DELETE | `/api/versions/{vid}` | 버전 삭제 — 소유자만 |
 | POST | `/api/projects/{pid}/images/cleanup` | 미참조 이미지 삭제 — 소유자만, 1시간 이내 업로드분 제외 → `{deleted, bytes}` |
 | POST | `/api/auth/register` | 회원가입 (`{username, password}` → `{token, username}`) |
 | POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
