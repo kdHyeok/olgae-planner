@@ -20,7 +20,11 @@
 - **이미지**
   - 기능 설명·PRD 편집 중 이미지 붙여넣기(Ctrl+V), 끌어놓기, `이미지 추가` 버튼 지원
   - 이미지는 DB(`images` 테이블)에 저장되고 `![](/api/images/<id>)` 마크다운으로 본문에 삽입됨
-  - 헤더 `⋯` 메뉴의 **미사용 이미지 정리**로 본문에서 참조하지 않는 이미지 삭제 (업로드 후 1시간 이내 이미지는 보호)
+  - 헤더 메뉴 → **이미지 앨범**(우측 사이드 탭): 추가 날짜별로 묶여 최근 순으로 표시
+  - 본문에서 사용 중인 이미지는 파란 테두리, 미사용은 테두리 없음
+  - 이미지 **우클릭 → 마크다운 링크 복사**(`![](…)`), 클립보드가 막히면 직접 복사할 수 있는 창 표시
+  - 사진을 **좌클릭하면 선택**(회색 표시). `전체 선택` / `전체 해제` 버튼은 항상 표시
+  - 선택이 있으면 우측 상단 **휴지통이 빨갛게 변하고 좌측 위에 선택 개수 배지**가 뜨며, 누르면 삭제
 - **버전 기록 (기능명세서)**
   - 헤더 메뉴 → `기능명세서 버전 기록`에서 현재 트리 상태를 스냅샷으로 저장
   - 목록에 **저장 일시 · 저장한 사용자 · 항목 수** 표시, `불러오기`로 그 시점으로 복원(두 번 클릭 확인)
@@ -99,7 +103,8 @@ docker compose up -d --build
 | GET / POST | `/api/projects/{pid}/versions` | 버전 목록 / 현재 기능명세서 스냅샷 저장 (로그인 필요) |
 | POST | `/api/versions/{vid}/restore` | 해당 버전으로 복원 (로그인 필요) |
 | DELETE | `/api/versions/{vid}` | 버전 삭제 — 소유자만 |
-| POST | `/api/projects/{pid}/images/cleanup` | 미참조 이미지 삭제 — 소유자만, 1시간 이내 업로드분 제외 → `{deleted, bytes}` |
+| GET | `/api/projects/{pid}/images` | 앨범 목록 (`id, created_at, bytes, used`) |
+| POST | `/api/projects/{pid}/images/delete` | 선택 이미지 삭제 (`{ids: [...]}`) → `{deleted, bytes}` |
 | POST | `/api/auth/register` | 회원가입 (`{username, password}` → `{token, username}`) |
 | POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
 | POST | `/api/auth/logout` | 로그아웃 (Bearer 토큰) |

@@ -110,6 +110,25 @@
   /* ---- detail panel ---- */
   #panel { width: 460px; background: #fff; border-left: 1px solid #e5e5e0; padding: 24px 28px; overflow: auto; display: none; }
   #panel.open { display: block; }
+  /* ---- 이미지 앨범 ---- */
+  #album { width: 372px; background: #fff; border-left: 1px solid #e5e5e0;
+    padding: 18px 20px; overflow: auto; }
+  #album[hidden] { display: none; }
+  .alb-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .alb-date { font-size: 12px; color: #999; margin: 16px 0 7px; }
+  .alb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .alb-item { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
+    border: 2px solid transparent; background: #f4f4f2; cursor: pointer; }
+  .alb-item.used { border-color: #4a7de0; }
+  .alb-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .alb-item.sel::after { content: '✓'; position: absolute; inset: 0; background: rgba(70,70,70,.55);
+    color: #fff; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+  .alb-trash { position: relative; overflow: visible; }
+  .alb-trash .cnt { position: absolute; top: -7px; left: -7px; min-width: 19px; height: 19px;
+    padding: 0 5px; background: #d64534; color: #fff; border-radius: 10px; font-size: 11px;
+    font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .sq { display: inline-block; width: 11px; height: 11px; border: 2px solid #4a7de0;
+    border-radius: 3px; vertical-align: -1px; margin-right: 3px; }
   /* readable detail view; every field edits in place on click */
   .dir-detail .detail { max-width: 820px; }
   .detail h1 { font-size: 22px; margin: 4px -7px 12px; padding: 3px 7px; border-radius: 7px; cursor: text; }
@@ -169,6 +188,7 @@
     <div id="content"></div>
   </div>
   <aside id="panel"></aside>
+  <aside id="album" hidden></aside>
 </main>
 <script>
 const STATUSES = ['기획 작성중', '기획 완료', '개발 중', '완료'];
@@ -448,14 +468,101 @@ function exportMarkdown() {
   toast('마크다운 파일을 내려받았습니다.');
 }
 
-async function cleanupImages() {
-  moreOpen = false; render();
+// ---------- 이미지 앨범 ----------
+let album = { open: false, items: [], sel: new Set() };
+
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; }
+  catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  }
+}
+
+async function openAlbum() {
+  moreOpen = false;
+  album.open = true; album.sel = new Set();
+  selectedId = null;                       // 상세 패널과 자리를 다투지 않게
+  await loadAlbum();
+}
+async function loadAlbum() {
+  album.items = await api(`/api/projects/${project.id}/images`).catch(() => []);
+  render();
+}
+function closeAlbum() { album.open = false; album.sel = new Set(); render(); }
+function albumClick(id) {                  // 좌클릭 = 선택 / 해제
+  album.sel.has(id) ? album.sel.delete(id) : album.sel.add(id);
+  render();
+}
+function albumSelectAll(on) { album.sel = new Set(on ? album.items.map(i => i.id) : []); render(); }
+
+async function albumCopyLink(e, id) {
+  e.preventDefault();
+  const md = `![](${location.origin}/api/images/${id})`;
+  const ok = await copyText(md);
+  if (!ok) {                               // 브라우저가 클립보드를 막으면 직접 복사할 수 있게 보여준다
+    showModal(() => `<h3 style="margin-bottom:10px">이미지 링크</h3>
+      <p class="hint" style="margin:0 0 12px">아래 텍스트를 복사해 본문에 붙여넣으세요.</p>
+      <input class="inline-edit" value="${esc(md)}" onclick="this.select()" readonly>
+      <div class="btnrow"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+    setTimeout(() => document.querySelector('.modal-box input')?.select(), 50);
+    return;
+  }
+  toast('이미지 링크를 복사했습니다.');
+}
+
+async function albumDelete() {
+  if (!album.sel.size) return toast('삭제할 이미지를 먼저 선택하세요.');
+  const ids = [...album.sel];
   try {
-    const r = await api(`/api/projects/${project.id}/images/cleanup`, { method: 'POST' });
-    toast(r.deleted
-      ? `미사용 이미지 ${r.deleted}개(${(r.bytes / 1024).toFixed(0)}KB)를 정리했습니다.`
-      : '정리할 미사용 이미지가 없습니다.');
-  } catch (e) { toast(e.detail || '이미지 정리 실패'); }
+    const r = await api(`/api/projects/${project.id}/images/delete`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    album.sel = new Set();
+    await loadAlbum();
+    toast(`이미지 ${r.deleted}개(${(r.bytes / 1024).toFixed(0)}KB)를 삭제했습니다.`);
+  } catch (e) { toast(e.detail || '삭제 실패'); }
+}
+
+function renderAlbum() {
+  const el = document.getElementById('album');
+  if (!album.open || !project) { el.hidden = true; return; }
+  el.hidden = false;
+  const n = album.sel.size;
+  const trash = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>`;
+  const groups = {};                       // 추가 날짜로 묶고 최근 순으로 보여준다
+  for (const it of album.items) {
+    const d = new Date(it.created_at).toLocaleDateString();
+    (groups[d] = groups[d] || []).push(it);
+  }
+  const body = Object.entries(groups).map(([date, items]) => `
+    <div class="alb-date">${date}</div>
+    <div class="alb-grid">${items.map(it => `
+      <div class="alb-item ${it.used ? 'used' : ''} ${album.sel.has(it.id) ? 'sel' : ''}"
+           title="${it.used ? '본문에서 사용 중' : '사용 중이 아님'}"
+           onclick="albumClick('${it.id}')" oncontextmenu="albumCopyLink(event,'${it.id}')">
+        <img src="/api/images/${it.id}" alt="" loading="lazy">
+      </div>`).join('')}</div>`).join('');
+
+  el.innerHTML = `
+    <div class="alb-head">
+      <b style="flex:1;font-size:15px">이미지 앨범</b>
+      <button class="btn ibtn alb-trash ${n ? 'danger' : ''}" onclick="albumDelete()"
+        title="${n ? n + '개 삭제' : '삭제할 이미지를 선택하세요'}">${trash}${n ? `<span class="cnt">${n}</span>` : ''}</button>
+      <button class="btn" onclick="closeAlbum()">닫기</button>
+    </div>
+    <p class="hint" style="margin:0 0 10px;line-height:1.7">
+      <span class="sq"></span> 사용중<br>· 우클릭 시, 링크 복사</p>
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <button class="btn" style="padding:5px 10px;font-size:12px" onclick="albumSelectAll(true)">전체 선택</button>
+      <button class="btn" style="padding:5px 10px;font-size:12px" onclick="albumSelectAll(false)">전체 해제</button>
+    </div>
+    ${album.items.length ? body : '<p style="color:#aaa;padding:20px 0">업로드한 이미지가 없습니다.</p>'}`;
 }
 const impBadge = v => moscow(v).ko;
 // 0-based depth: 대분류 = 0
@@ -573,7 +680,7 @@ function render() {
     ${moreOpen ? `<div class="fmenu" style="left:auto;right:0;min-width:210px">
       ${auth ? `<div class="fitem act" onclick="openVersions()">기능명세서 버전 기록<br><small>현재 상태 저장 · 이전 시점으로 되돌리기</small></div>` : ''}
       <div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>
-      ${shareToken ? '' : `<div class="fitem act" onclick="cleanupImages()">미사용 이미지 정리<br><small>본문에서 참조하지 않는 이미지 삭제</small></div>`}
+      <div class="fitem act" onclick="openAlbum()">이미지 앨범<br><small>업로드한 이미지 보기 · 링크 복사 · 삭제</small></div>
     </div>` : ''}` : '';
   document.getElementById('contenttools').style.display = has && tab === 'spec' ? 'flex' : 'none';
   const fEl = document.getElementById('impfilter');
@@ -587,12 +694,18 @@ function render() {
         <button class="btn" style="padding:3px 9px;font-size:12px" onclick="setAllImp(true)">전체 선택</button>
         <button class="btn" style="padding:3px 9px;font-size:12px" onclick="setAllImp(false)">전체 해제</button>
       </div></div>` : ''}`;
-  if (!has) { renderProjects(c); document.getElementById('panel').classList.remove('open'); return; }
+  if (!has) {
+    renderProjects(c);
+    document.getElementById('panel').classList.remove('open');
+    document.getElementById('album').hidden = true;
+    return;
+  }
   document.getElementById('tab-spec').classList.toggle('active', tab === 'spec');
   document.getElementById('tab-prd').classList.toggle('active', tab === 'prd');
   document.getElementById('view-tree').classList.toggle('active', view === 'tree');
   document.getElementById('view-dir').classList.toggle('active', view === 'dir');
   if (tab === 'prd') { renderPrd(c); document.getElementById('panel').classList.remove('open'); return; }
+  renderAlbum();
   if (modalRender) paintModal();
   if (view === 'tree') {
     renderTree(c); renderPanel();
@@ -728,9 +841,7 @@ async function dropShare(id) {
 }
 function copyShare(token) {
   const url = location.origin + '/?share=' + token;
-  (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
-    .then(() => toast('공유 링크가 복사되었습니다:\n' + url))
-    .catch(() => prompt('공유 링크:', url));
+  copyText(url).then(ok => toast((ok ? '공유 링크가 복사되었습니다:' : '공유 링크:') + '\n' + url));
 }
 
 function renderTree(c) {
@@ -756,10 +867,10 @@ function renderTree(c) {
     <span class="node-card mm-root" data-id="root" ${DROP(null)} title="여기에 드롭하면 대분류가 됩니다">PRD</span>
     <div class="mm-children">${roots.map(([n, num], i) =>
       `<div class="mm-child">${branch(n, num, 0, i)}</div>`).join('')}
-      ${roots.length || filterOn() ? '' : `<div class="mm-child"><span style="color:#aaa">${empty}</span></div>`}
-      ${filterOn() ? '' : `<div class="mm-child">
+      ${roots.length ? '' : `<div class="mm-child"><span style="color:#aaa">${empty}</span></div>`}
+      <div class="mm-child">
         <span class="node-card ghost" data-id="ghost" onclick="addNode(null)"
-          title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</span></div>`}</div>
+          title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</span></div></div>
   </div></div>`;
   drawLinks();
 }
@@ -814,8 +925,7 @@ function renderDir(c) {
   const list = shownChildren(null, '').map(([g, num]) =>
     `<div class="dir-group">${item(g, num, 0)}</div>`).join('')
     || `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : ''}</p>`;
-  const addRow = filterOn() ? ''
-    : `<div class="dir-item dir-ghost" onclick="addNode(null)" title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</div>`;
+  const addRow = `<div class="dir-item dir-ghost" onclick="addNode(null)" title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</div>`;
   const sel = nodes.find(n => n.id === selectedId);
   const detail = sel ? detailBody(sel, false)
     : '<p style="color:#aaa;margin-top:40px">왼쪽 목록에서 항목을 선택하세요.</p>';
@@ -965,6 +1075,11 @@ async function addNode(parentId) {
   const n = await api(`/api/projects/${project.id}/nodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ parent_id: parentId, title: parentId ? '새 하위 기능' : '새 대분류' }) });
   nodes = await reloadNodes();
+  // 새 항목의 중요도가 필터에서 꺼져 있으면 보이도록 켜 준다
+  if (filterOn() && !impFilter.has(n.importance)) {
+    impFilter.add(n.importance);
+    toast(`새 항목이 보이도록 '${moscow(n.importance).ko}' 필터를 켰습니다.`);
+  }
   selectedId = n.id; collapsed.delete(parentId); render();
   // 생성 직후 제목을 바로 고칠 수 있게 편집 상태로 연다
   const h1 = document.querySelector((view === 'tree' ? '#panel' : '.dir-detail') + ' .detail h1');
