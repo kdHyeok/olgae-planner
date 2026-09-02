@@ -2,7 +2,7 @@ import hashlib
 import os
 import secrets
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
@@ -43,6 +43,13 @@ def init_db():
             );
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS
                 project_id int REFERENCES projects(id) ON DELETE CASCADE;
+            CREATE TABLE IF NOT EXISTS images (
+                id text PRIMARY KEY,
+                project_id int REFERENCES projects(id) ON DELETE CASCADE,
+                mime text NOT NULL,
+                data bytea NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now()
+            );
             CREATE TABLE IF NOT EXISTS comments (
                 id serial PRIMARY KEY,
                 node_id int NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
@@ -339,6 +346,40 @@ def delete_node(node_id: int, share: str | None = None,
     with pool.connection() as conn, conn.cursor() as cur:
         check_access(cur, node_project(cur, node_id), user, share)
         cur.execute("DELETE FROM nodes WHERE id = %s", (node_id,))
+
+
+# ---------- images ----------
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+@app.post("/api/projects/{pid}/images", status_code=201)
+async def upload_image(pid: int, request: Request, share: str | None = None,
+                       user: dict | None = Depends(opt_user)):
+    mime = request.headers.get("content-type", "")
+    if not mime.startswith("image/"):
+        raise HTTPException(400, "이미지 파일만 올릴 수 있습니다")
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "빈 파일입니다")
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "이미지는 5MB 이하만 올릴 수 있습니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_access(cur, pid, user, share)
+        img_id = secrets.token_urlsafe(16)
+        cur.execute("INSERT INTO images (id, project_id, mime, data) VALUES (%s, %s, %s, %s)",
+                    (img_id, pid, mime.split(";")[0], data))
+    return {"url": f"/api/images/{img_id}"}
+
+
+@app.get("/api/images/{img_id}")
+def get_image(img_id: str):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT mime, data FROM images WHERE id = %s", (img_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "not found")
+    return Response(content=bytes(row[1]), media_type=row[0],
+                    headers={"Cache-Control": "public, max-age=31536000"})
 
 
 # ---------- comments ----------
