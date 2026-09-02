@@ -153,8 +153,14 @@ Cursor·Claude Desktop 등은 같은 모달의 JSON 을 설정 파일에 붙여 
 - 인증은 **요청마다 Authorization 헤더**로 하며, 서버는 토큰을 저장하지 않습니다.
   권한 판정은 REST API 와 같은 코드(`opt_user` / `check_access` / `check_owner`)를 그대로 씁니다.
 - 토큰 주인의 프로젝트 전체에 대한 읽기·쓰기 권한입니다. 로그아웃하면 즉시 무효가 되니 다시 등록해야 합니다.
-- 배포 시 `MCP_ALLOWED_HOSTS=prd.example.com` 을 주면 그 Host 만 허용합니다(DNS 리바인딩 방어).
-  비워 두면 검사를 끕니다.
+- `/mcp` 는 Host 검사로 DNS 리바인딩을 막습니다. `docker-compose.yml` 의 `MCP_ALLOWED_HOSTS` 가
+  기본값으로 로컬 주소(`localhost:3000,127.0.0.1:3000`)만 허용하므로, **배포할 때는 도메인을 넘겨야 합니다**:
+
+  ```bash
+  MCP_ALLOWED_HOSTS=prd.example.com docker compose up -d
+  ```
+
+  콤마로 여러 개(`prd.example.com,localhost:3000`) 지정할 수 있고, 빈 값(`MCP_ALLOWED_HOSTS=`)이면 검사를 끕니다.
 
 ### 로컬 테스트
 
