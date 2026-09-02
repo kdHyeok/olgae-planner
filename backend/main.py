@@ -53,6 +53,12 @@ def init_db():
                 created_at timestamptz NOT NULL DEFAULT now(),
                 data jsonb NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS term_categories (
+                id serial PRIMARY KEY,
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                name text NOT NULL,
+                UNIQUE (project_id, name)
+            );
             CREATE TABLE IF NOT EXISTS terms (
                 id serial PRIMARY KEY,
                 project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -60,6 +66,9 @@ def init_db():
                 description text NOT NULL DEFAULT '',
                 UNIQUE (project_id, term)
             );
+            ALTER TABLE terms ADD COLUMN IF NOT EXISTS sort_order int NOT NULL DEFAULT 0;
+            ALTER TABLE terms ADD COLUMN IF NOT EXISTS
+                category_id int REFERENCES term_categories(id) ON DELETE SET NULL;
             CREATE TABLE IF NOT EXISTS images (
                 id text PRIMARY KEY,
                 project_id int REFERENCES projects(id) ON DELETE CASCADE,
@@ -370,21 +379,32 @@ TERM_RE = re.compile(r"`([^`\n]{1,60})`")
 
 
 class TermIn(BaseModel):
-    description: str
+    description: str | None = None
+    category_id: int | None = None
+    sort_order: int | None = None
 
 
 def sync_terms(cur, pid: int):
     """본문(PRD·기능 설명)에 있는 `용어` 를 훑어 없는 건 만들고, 안 쓰이는 건 지운다."""
     cur.execute("SELECT prd FROM projects WHERE id = %s", (pid,))
     texts = [cur.fetchone()[0]]
-    cur.execute("SELECT description FROM nodes WHERE project_id = %s", (pid,))
+    cur.execute("SELECT description FROM nodes WHERE project_id = %s"
+                " ORDER BY sort_order, id", (pid,))
     texts += [r[0] for r in cur.fetchall()]
 
-    found = {m.strip() for t in texts for m in TERM_RE.findall(t or "")}
-    found.discard("")
+    # 본문에 나온 순서대로 (추가 순서가 곧 기본 정렬)
+    found, seen = [], set()
+    for t in texts:
+        for m in TERM_RE.finditer(t or ""):
+            w = m.group(1).strip()
+            if w and w not in seen:
+                seen.add(w)
+                found.append(w)
     for term in found:
-        cur.execute("""INSERT INTO terms (project_id, term) VALUES (%s, %s)
-                       ON CONFLICT (project_id, term) DO NOTHING""", (pid, term))
+        cur.execute("""INSERT INTO terms (project_id, term, sort_order)
+                       VALUES (%s, %s, (SELECT coalesce(max(sort_order), -1) + 1
+                                        FROM terms WHERE project_id = %s))
+                       ON CONFLICT (project_id, term) DO NOTHING""", (pid, term, pid))
     cur.execute("DELETE FROM terms WHERE project_id = %s AND NOT (term = ANY(%s))",
                 (pid, list(found) or [""]))
 
@@ -394,8 +414,16 @@ def list_terms(pid: int, share: str | None = None, user: dict | None = Depends(o
     with pool.connection() as conn, conn.cursor() as cur:
         check_access(cur, pid, user, share)
         sync_terms(cur, pid)
-        cur.execute("SELECT id, term, description FROM terms WHERE project_id = %s"
-                    " ORDER BY lower(term)", (pid,))
+        cur.execute("""
+            SELECT t.id, t.term, t.description, t.category_id, t.sort_order,
+                   EXISTS (SELECT 1 FROM projects p WHERE p.id = t.project_id
+                           AND position('`' || t.term || '`' in p.prd) > 0) AS in_prd,
+                   (SELECT coalesce(json_agg(json_build_object('id', n.id, 'title', n.title)
+                                             ORDER BY n.sort_order, n.id), '[]'::json)
+                    FROM nodes n WHERE n.project_id = t.project_id
+                      AND position('`' || t.term || '`' in n.description) > 0) AS nodes
+            FROM terms t WHERE t.project_id = %s
+            ORDER BY t.sort_order, t.id""", (pid,))
         return rows_to_dicts(cur)
 
 
@@ -408,9 +436,52 @@ def update_term(tid: int, body: TermIn, share: str | None = None,
         if not row:
             raise HTTPException(404, "용어를 찾을 수 없습니다")
         check_access(cur, row[0], user, share)
-        cur.execute("UPDATE terms SET description = %s WHERE id = %s RETURNING id, term, description",
-                    (body.description, tid))
+        fields = body.model_dump(exclude_unset=True)
+        if not fields:
+            raise HTTPException(400, "no fields")
+        sets = ", ".join(f"{k} = %s" for k in fields)
+        cur.execute(f"UPDATE terms SET {sets} WHERE id = %s"
+                    " RETURNING id, term, description, category_id, sort_order",
+                    (*fields.values(), tid))
         return rows_to_dicts(cur)[0]
+
+
+class CategoryIn(BaseModel):
+    name: str
+
+
+@app.get("/api/projects/{pid}/term-categories")
+def list_categories(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_access(cur, pid, user, share)
+        cur.execute("SELECT id, name FROM term_categories WHERE project_id = %s ORDER BY id", (pid,))
+        return rows_to_dicts(cur)
+
+
+@app.post("/api/projects/{pid}/term-categories", status_code=201)
+def create_category(pid: int, body: CategoryIn, share: str | None = None,
+                    user: dict | None = Depends(opt_user)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "카테고리 이름이 필요합니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_access(cur, pid, user, share)
+        cur.execute("""INSERT INTO term_categories (project_id, name) VALUES (%s, %s)
+                       ON CONFLICT (project_id, name) DO UPDATE SET name = EXCLUDED.name
+                       RETURNING id, name""", (pid, name))
+        return rows_to_dicts(cur)[0]
+
+
+@app.delete("/api/term-categories/{cid}", status_code=204)
+def delete_category(cid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+    """카테고리만 지운다. 속해 있던 용어는 미분류로 남는다."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT project_id FROM term_categories WHERE id = %s", (cid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "카테고리를 찾을 수 없습니다")
+        check_access(cur, row[0], user, share)
+        cur.execute("DELETE FROM term_categories WHERE id = %s", (cid,))
 
 
 # ---------- versions (기능명세서 스냅샷) ----------
