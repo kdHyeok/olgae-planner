@@ -133,6 +133,55 @@ docker compose up -d --build
 | POST | `/api/nodes/{id}/comments` | 코멘트 작성 (로그인 필요, `Authorization: Bearer <token>`) |
 | DELETE | `/api/comments/{id}` | 본인 코멘트 삭제 (로그인 필요) |
 
+## MCP 서버 (배포 서버가 제공)
+
+백엔드가 `/mcp` 에 HTTP MCP 엔드포인트를 함께 제공합니다. 사용자는 **설치 없이 명령 한 줄**로 등록합니다.
+
+앱에서 헤더 메뉴 → **MCP 연결** 을 열면 본인 토큰이 채워진 명령이 나오고 복사 버튼이 있습니다.
+
+```bash
+claude mcp add --transport http prd-spec https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
+```
+
+Cursor·Claude Desktop 등은 같은 모달의 JSON 을 설정 파일에 붙여 넣습니다.
+
+```json
+{ "mcpServers": { "prd-spec": { "type": "http", "url": "https://<호스트>/mcp",
+  "headers": { "Authorization": "Bearer <세션토큰>" } } } }
+```
+
+- 인증은 **요청마다 Authorization 헤더**로 하며, 서버는 토큰을 저장하지 않습니다.
+  권한 판정은 REST API 와 같은 코드(`opt_user` / `check_access` / `check_owner`)를 그대로 씁니다.
+- 토큰 주인의 프로젝트 전체에 대한 읽기·쓰기 권한입니다. 로그아웃하면 즉시 무효가 되니 다시 등록해야 합니다.
+- 배포 시 `MCP_ALLOWED_HOSTS=prd.example.com` 을 주면 그 Host 만 허용합니다(DNS 리바인딩 방어).
+  비워 두면 검사를 끕니다.
+
+### 로컬 테스트
+
+```bash
+docker compose up -d --build
+# 토큰 발급
+curl -s -X POST http://localhost:3000/api/auth/login   -H "Content-Type: application/json" -d '{"username":"<계정>","password":"<비밀번호>"}'
+# 등록 (-s local: 내 기기에만 저장)
+claude mcp add --transport http prd-spec http://localhost:3000/mcp -s local   -H "Authorization: Bearer <위 토큰>"
+```
+
+등록 뒤 Claude Code 를 재시작하고 `/mcp` 로 연결 상태를 확인합니다.
+브라우저에서 로그인한 상태라면 **MCP 연결** 모달의 명령을 그대로 복사하는 것이 가장 빠릅니다.
+
+| 툴 | 설명 |
+|---|---|
+| `list_projects` | 내 프로젝트 목록 (project_id 확인) |
+| `get_spec` | PRD 본문 + 기능 트리 한 번에. 화면과 같은 계층 번호(`1`, `1.1`) 포함 |
+| `set_prd` | PRD 본문 전체 덮어쓰기 |
+| `create_node` / `update_node` / `delete_node` | 기능 항목 추가 / 부분 수정 / 삭제(하위 포함) |
+| `list_terms` / `set_term` | 용어 목록(호출 시 자동 동기화) / 설명·카테고리·순서 수정 |
+| `save_version` / `list_versions` / `restore_version` | 스냅샷 저장 / 목록 / 복원 |
+| `list_comments` / `add_comment` | 코멘트 조회 / 작성 |
+
+프로젝트 생성·삭제, 공유 링크 관리, 이미지 업로드·삭제는 툴로 열지 않았습니다(웹 UI 에서 처리).
+공유 링크 토큰만으로 접근하는 모드는 아직 지원하지 않습니다 — 그 경우 버전 저장·복원과 코멘트 작성이 API 에서 막힙니다.
+
 ## 프로젝트 구조
 
 ```
@@ -143,7 +192,8 @@ docker compose up -d --build
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   └── main.py          # FastAPI 전체 (스키마 생성 + 마이그레이션 + API)
+│   ├── main.py          # FastAPI 전체 (스키마 생성 + 마이그레이션 + API)
+│   └── mcp_app.py       # /mcp HTTP MCP 서버 (main 의 핸들러를 재사용)
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf       # 정적 서빙 + /api 프록시
