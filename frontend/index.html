@@ -39,7 +39,9 @@
   #contentwrap { flex: 1; min-width: 0; position: relative; display: flex; }
   #content { flex: 1; overflow: auto; padding: 24px; }
   #contenttools { position: absolute; top: 12px; right: 18px; z-index: 20; display: flex; gap: 8px; align-items: center; }
-  #contenttools > * { flex: none; }
+  #contentleft { position: absolute; top: 12px; left: 18px; z-index: 20; display: flex; gap: 6px; }
+  #contenttools > *, #contentleft > * { flex: none; }
+  #contentleft .btn { padding: 5px 11px; font-size: 12px; }
   /* ---- tree view (horizontal mindmap) ---- */
   .tree { display: flex; align-items: center; min-height: 100%; padding: 20px; width: max-content; }
   .mm-branch { display: flex; align-items: center; }
@@ -97,7 +99,9 @@
   .node-card:hover .grip, .dir-item:hover .grip { color: #8f8f89; }
   /* ---- directory view ---- */
   .dir { display: flex; gap: 0; height: 100%; }
-  .dir-list { width: 340px; border-right: 1px solid #e5e5e0; overflow: auto; padding-right: 16px; }
+  .dir-list { width: 360px; border-right: 1px solid #e5e5e0; overflow: auto;
+    padding: 46px 16px 0 0; }
+  .dir-item .toggle { border: none; background: none; cursor: pointer; color: #999; padding: 0; font-size: 10px; }
   .dir-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
   .dir-item:hover { background: #ececea; }
   .dir-item.selected { background: #e3e7f7; }
@@ -106,7 +110,7 @@
   .dir-item.child { margin-left: 28px; }
   .dir-item.child .num { background: #f2f2ef; }
   .dir-group { border-bottom: 1px solid #eee; padding: 6px 0; }
-  .dir-detail { flex: 1; overflow: auto; padding: 8px 32px; }
+  .dir-detail { flex: 1; overflow: auto; padding: 46px 32px 8px; }
   /* ---- detail panel ---- */
   #panel { width: 460px; background: #fff; border-left: 1px solid #e5e5e0; padding: 24px 28px; overflow: auto; display: none; }
   #panel.open { display: block; }
@@ -141,7 +145,7 @@
   .term:hover { background: #eef1fb; }
   #termtip { position: fixed; z-index: 300; max-width: 320px; background: #fff; color: #333;
     border: 1px solid #d9d9d3; border-radius: 8px; padding: 10px 13px; font-size: 13px;
-    line-height: 1.6; box-shadow: 0 8px 24px rgba(0,0,0,.14); pointer-events: none; }
+    line-height: 1.6; box-shadow: 0 8px 24px rgba(0,0,0,.14); }
   #termtip[hidden] { display: none; }
   #termtip b.t { display: block; font-size: 12px; color: #46538a; margin-bottom: 4px; }
   .gtable { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -149,9 +153,16 @@
     border-bottom: 1px solid #eee; padding: 6px 8px; }
   .gtable td { border-bottom: 1px solid #f2f2ee; padding: 9px 8px; vertical-align: top; }
   .gterm { font-family: Consolas, monospace; color: #46538a; background: #eef1fb;
-    padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+    padding: 3px 8px; border-radius: 5px; white-space: nowrap; cursor: grab; display: inline-block; }
+  .gterm:active { cursor: grabbing; }
   .gdesc { cursor: text; border-radius: 6px; }
   .gdesc:hover { background: #f6f6f3; }
+  .guse { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .btn.goto { padding: 2px 9px; font-size: 11px; border-radius: 12px; color: #46538a;
+    border-color: #d6ddf2; background: #f5f7fd; }
+  .btn.goto:hover { background: #e8edfb; }
+  .desc-md a, .prd-doc a, #termtip a, .gdesc a { color: #2f62c4; text-decoration: underline; }
+  .mv[disabled] { opacity: .3; cursor: default; }
   .pill-select { border: 1px solid #e2e2dd; background: #f7f7f5; border-radius: 20px;
     padding: 3px 10px; font-size: 12px; color: #555; font-family: inherit; cursor: pointer; }
   .inline-edit { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid #6b7fd7;
@@ -169,6 +180,8 @@
   .prd-doc h1 { font-size: 26px; margin: 0 0 20px; } .prd-doc h2 { font-size: 20px; margin: 28px 0 10px; }
   .prd-doc h3 { font-size: 16px; margin: 20px 0 6px; } .prd-doc p { margin: 8px 0; }
   .prd-doc ul { padding-left: 22px; margin: 8px 0; }
+  .prd-doc { cursor: text; }
+  .prd-doc:hover { border-color: #d8d8d2; }
   #prd-edit { width: 100%; max-width: 820px; display: block; margin: 0 auto 12px; min-height: 65vh; padding: 20px;
     border: 1px solid #ddd; border-radius: 10px; font-size: 14px; font-family: Consolas, monospace; line-height: 1.6; }
   .toolbar { max-width: 820px; margin: 0 auto 14px; display: flex; justify-content: flex-end; gap: 8px; }
@@ -196,6 +209,10 @@
 <div id="termtip" hidden></div>
 <main>
   <div id="contentwrap">
+    <div id="contentleft">
+      <button class="btn" onclick="collapseAll()" title="모든 하위 항목 접기">전체 접기</button>
+      <button class="btn" onclick="expandAll()" title="모든 하위 항목 펼치기">전체 펼치기</button>
+    </div>
     <div id="contenttools">
       <div class="viewtoggle" id="viewtoggle">
         <button id="view-tree" class="active ibtn" onclick="setView('tree')" title="트리 뷰" aria-label="트리 뷰"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4"/><path d="M8 6h3v12H8"/><path d="M11 6h2M11 12h2M11 18h2"/><circle cx="4" cy="12" r="1.6" fill="currentColor"/><rect x="13" y="3.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="9.6" width="7" height="4.8" rx="1.6"/><rect x="13" y="15.6" width="7" height="4.8" rx="1.6"/></svg></button>
@@ -213,6 +230,7 @@ const STATUSES = ['기획 작성중', '기획 완료', '개발 중', '완료'];
 const MAX_DEPTH = 4;  // 대분류 > 중분류 > 소분류 > 세부
 let tab = 'prd', view = 'tree', nodes = [], selectedId = null, collapsed = new Set(), prdContent = '', prdEditing = false;
 let project = null, projects = [];
+let restoreScroll = () => {};
 let modalRender = null;
 function showModal(fn) { modalRender = fn; paintModal(); }
 function paintModal() {
@@ -352,12 +370,35 @@ const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&
 
 // minimal markdown: #/##/### headings, - bullets, blank-line paragraphs
 // ![alt](url) → <img>. 우리 이미지 API와 http(s) 주소만 허용한다
-const inline = t => esc(t)
-  .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) =>
-    /^(\/api\/images\/[\w-]+|https?:\/\/)/.test(url) ? `<img src="${url}" alt="${alt}" loading="lazy">` : m)
+const SAFE_HREF = /^(https?:\/\/|mailto:|#|\/)/;
+// 스킴 없는 주소(localhost:3000/... , example.com/...)도 링크로 인정한다
+const HOSTLIKE = /^(localhost(:\d+)?|[\w-]+(\.[\w-]+)+(:\d+)?)([\/?#]|$)/;
+function safeHref(url) {
+  if (SAFE_HREF.test(url)) return url;
+  if (HOSTLIKE.test(url)) return '//' + url;   // 현재 페이지와 같은 http/https 로 연결
+  return null;
+}
+function inline(raw) {
+  let t = esc(raw);
+  const keep = [];
+  const stash = html => `\u0000${keep.push(html) - 1}\u0000`;
+  // ![대체텍스트](주소) → 이미지
+  t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) =>
+    /^(\/api\/images\/[\w-]+|https?:\/\/)/.test(url)
+      ? stash(`<img src="${url}" alt="${alt}" loading="lazy">`) : m);
+  // [표시이름](주소) → 링크
+  t = t.replace(/(^|[^!])\[([^\]]+)\]\(([^)\s]+)\)/g, (m, pre, label, url) => {
+    const href = safeHref(url);
+    return href ? pre + stash(`<a href="${href}" target="_blank" rel="noopener">${label}</a>`) : m;
+  });
+  // 주소만 적어도 링크 ([url](url) 와 같은 결과)
+  t = t.replace(/(^|[\s(])((?:https?:\/\/|localhost:\d+)[^\s<>"')\]]*)/g, (m, pre, url) =>
+    pre + stash(`<a href="${safeHref(url)}" target="_blank" rel="noopener">${url}</a>`));
   // `용어` → 용어 사전 링크
-  .replace(/`([^`\n]{1,60})`/g, (m, w) =>
+  t = t.replace(/`([^`\n]{1,60})`/g, (m, w) =>
     `<span class="term" data-term="${w.trim()}" onclick="openGlossary()">${w}</span>`);
+  return t.replace(/\u0000(\d+)\u0000/g, (m, i) => keep[i]);
+}
 
 function md(text) {
   const out = []; let ul = false;
@@ -492,30 +533,178 @@ function exportMarkdown() {
 }
 
 // ---------- 용어 사전 ----------
-let terms = [];
+let terms = [], termCats = [], groupTerms = false;
 const termOf = w => terms.find(t => t.term.toLowerCase() === String(w).toLowerCase());
 
 async function loadTerms() {
   if (!project) return;
-  terms = await api(`/api/projects/${project.id}/terms`).catch(() => []);
+  [terms, termCats] = await Promise.all([
+    api(`/api/projects/${project.id}/terms`).catch(() => []),
+    api(`/api/projects/${project.id}/term-categories`).catch(() => []),
+  ]);
+}
+
+// 화면에 보이는 묶음 (카테고리 분류 토글에 따라 달라짐)
+function termGroups() {
+  if (!groupTerms) return [{ name: null, items: terms }];
+  const byCat = termCats.map(c => ({ name: c.name, cat: c, items: terms.filter(t => t.category_id === c.id) }));
+  const none = terms.filter(t => !termCats.some(c => c.id === t.category_id));
+  return [...byCat, { name: '미분류', items: none }];
+}
+
+function termRow(t, group) {
+  const i = group.items.findIndex(x => x.id === t.id);
+  return `<tr ondragover="termDragOver(event,${t.id})" ondragleave="dragLeave(event)"
+      ondrop="termDrop(event,${t.id})">
+    <td><span class="gterm" draggable="true" title="끌어서 순서 변경"
+      ondragstart="termDragStart(event,${t.id})" ondragend="dragEnd()">⠿ ${esc(t.term)}</span></td>
+    <td>
+      <select class="pill-select" onchange="setTermCat(${t.id}, this.value)">
+        <option value="">미분류</option>
+        ${termCats.map(c => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+      </select>
+    </td>
+    <td class="gdesc" title="더블클릭하여 수정" ondblclick="editTermDesc(this,${t.id})">${
+      md(t.description) || '<span style="color:#bbb">클릭하여 설명 작성</span>'}
+      <div class="guse">${[
+        ...(t.in_prd ? [`<button class="btn goto" onclick="gotoPrd()">PRD</button>`] : []),
+        ...(t.nodes || []).map(n => `<button class="btn goto" onclick="gotoNode(${n.id})">${esc(n.title)}</button>`)
+      ].join('') || '<span style="color:#ccc;font-size:11px">사용처 없음</span>'}</div></td>
+    <td style="white-space:nowrap;text-align:right">
+      <button class="mv" title="위로" ${i === 0 ? 'disabled' : ''} onclick="moveTerm(${t.id},-1)">▲</button>
+      <button class="mv" title="아래로" ${i === group.items.length - 1 ? 'disabled' : ''} onclick="moveTerm(${t.id},1)">▼</button>
+    </td></tr>`;
 }
 
 function glossaryHTML() {
+  const groups = termGroups();
+  const table = g => `<table class="gtable">
+    <thead><tr><th style="width:120px">용어</th><th style="width:110px">카테고리</th><th>설명</th><th style="width:52px"></th></tr></thead>
+    <tbody>${g.items.map(t => termRow(t, g)).join('')}</tbody></table>`;
   return `<h3 style="margin-bottom:6px">용어 사전</h3>
-    <p class="hint" style="margin:0 0 14px">본문에서 <code>&#96;용어&#96;</code> 처럼 백틱으로 감싸면 자동으로 등록되고,
-      어디에서도 쓰이지 않으면 자동으로 사라집니다. 설명은 마크다운으로 쓸 수 있습니다.</p>
-    <div style="display:flex;gap:8px;margin-bottom:12px">
-      <button class="btn" onclick="closeModal()">닫기</button>
+    <p class="hint" style="margin:0 0 12px">본문에서 <code>&#96;용어&#96;</code> 처럼 백틱으로 감싸면 자동으로 등록되고,
+      어디에서도 쓰이지 않으면 자동으로 사라집니다. 기본 순서는 등록된 순서이며 ▲▼ 로 바꿀 수 있습니다.</p>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <label class="fitem" style="padding:4px 8px">
+        <input type="checkbox" ${groupTerms ? 'checked' : ''} onchange="groupTerms=this.checked;paintModal()">
+        카테고리로 분류</label>
+      <button class="btn" style="margin-left:auto" onclick="closeModal()">닫기</button>
     </div>
-    ${terms.length ? `<table class="gtable">
-      <thead><tr><th style="width:130px">용어</th><th>설명</th></tr></thead>
-      <tbody>${terms.map(t => `<tr>
-        <td><span class="gterm">${esc(t.term)}</span></td>
-        <td class="gdesc" title="클릭하여 수정" onclick="editTermDesc(this,${t.id})">${
-          md(t.description) || '<span style="color:#bbb">클릭하여 설명 작성</span>'}</td>
-      </tr>`).join('')}</tbody></table>`
+    ${groupTerms ? `<div style="background:#f7f7f5;border-radius:8px;padding:10px 12px;margin-bottom:14px">
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input type="text" id="new-cat" placeholder="카테고리 추가"
+          style="flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px"
+          onkeydown="if(event.key==='Enter')addTermCat()">
+        <button class="btn" style="padding:4px 12px;font-size:12px" onclick="addTermCat()">추가</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${termCats.map(c => `
+        <span class="badge" style="display:inline-flex;gap:6px;align-items:center;padding:3px 6px 3px 10px">
+          ${esc(c.name)}
+          <button class="mv" title="카테고리 삭제" style="font-size:12px"
+            onclick="delTermCat(${c.id})">✕</button></span>`).join('') || '<span style="color:#aaa;font-size:12px">카테고리가 없습니다</span>'}</div>
+    </div>` : ''}
+    ${terms.length ? groups.map(g => g.items.length || g.cat
+        ? `${groupTerms ? `<div class="alb-date">${esc(g.name)} · ${g.items.length}개</div>` : ''}
+           ${g.items.length ? table(g) : '<p style="color:#bbb;font-size:12px;padding:4px 0 10px">비어 있음</p>'}`
+        : '').join('')
       : '<p style="color:#aaa;padding:14px 0">등록된 용어가 없습니다. 본문에 백틱으로 용어를 감싸보세요.</p>'}`;
 }
+
+let dragTerm = null;
+function termDragStart(e, id) {
+  dragTerm = id;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', String(id)); } catch (_) {}
+  e.stopPropagation();
+}
+function termDragOver(e, targetId) {
+  if (dragTerm == null || dragTerm === targetId) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  const el = e.currentTarget;
+  clearDropHints(el);
+  const r = el.getBoundingClientRect();
+  el.classList.add(e.clientY > r.top + r.height / 2 ? 'drop-after' : 'drop-before');
+}
+async function termDrop(e, targetId) {
+  e.preventDefault(); e.stopPropagation();
+  const r = e.currentTarget.getBoundingClientRect();
+  const after = e.clientY > r.top + r.height / 2;
+  clearDropHints();
+  const id = dragTerm; dragTerm = null;
+  if (id == null || id === targetId) return;
+  const g = termGroups().find(x => x.items.some(t => t.id === targetId));
+  if (!g || !g.items.some(t => t.id === id))
+    return toast('같은 카테고리 안에서만 순서를 바꿀 수 있습니다.');
+  const moved = g.items.find(t => t.id === id);
+  const order = g.items.filter(t => t.id !== id);
+  order.splice(order.findIndex(t => t.id === targetId) + (after ? 1 : 0), 0, moved);
+  // 이 묶음이 쓰던 sort_order 값들을 새 순서대로 다시 배정한다
+  const slots = g.items.map(t => t.sort_order).sort((a, b) => a - b);
+  await Promise.all(order.map((t, i) => t.sort_order === slots[i] ? null :
+    api('/api/terms/' + t.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sort_order: slots[i] }) })));
+  await loadTerms(); paintModal();
+}
+
+// 용어가 쓰인 곳으로 바로 이동
+function gotoPrd() { closeModal(); tab = 'prd'; render(); }
+function gotoNode(id) {
+  closeModal();
+  tab = 'spec';
+  const n = nodes.find(x => x.id === id);
+  if (n) {
+    if (filterOn() && !impFilter.has(n.importance)) impFilter.add(n.importance);
+    for (let cur = n; cur; cur = nodes.find(x => x.id === cur.parent_id)) collapsed.delete(cur.id);
+  }
+  selectedId = id;
+  render();
+  setTimeout(() => {
+    const el = document.querySelector(`.node-card[data-id="${id}"], .dir-item[data-id="${id}"]`);
+    el?.scrollIntoView({ block: 'center', inline: 'center' });
+  }, 60);
+}
+
+async function setTermCat(id, value) {
+  const t = terms.find(x => x.id === id);
+  try {
+    const r = await api('/api/terms/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category_id: value ? +value : null }) });
+    t.category_id = r.category_id;
+    paintModal();
+  } catch (e) { toast(e.detail || '카테고리 지정 실패'); }
+}
+async function addTermCat() {
+  const el = document.getElementById('new-cat');
+  const name = el.value.trim();
+  if (!name) return;
+  try {
+    await api(`/api/projects/${project.id}/term-categories`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    await loadTerms(); paintModal();
+  } catch (e) { toast(e.detail || '카테고리 추가 실패'); }
+}
+async function delTermCat(id) {
+  try {
+    await api('/api/term-categories/' + id, { method: 'DELETE' });
+    await loadTerms(); paintModal();
+  } catch (e) { toast(e.detail || '카테고리 삭제 실패'); }
+}
+// 보이는 묶음 안에서 이웃과 순서를 맞바꾼다
+async function moveTerm(id, dir) {
+  const g = termGroups().find(x => x.items.some(t => t.id === id));
+  const i = g.items.findIndex(t => t.id === id), j = i + dir;
+  if (j < 0 || j >= g.items.length) return;
+  const a = g.items[i], b = g.items[j];
+  await Promise.all([
+    api('/api/terms/' + a.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sort_order: b.sort_order }) }),
+    api('/api/terms/' + b.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sort_order: a.sort_order }) }),
+  ]);
+  await loadTerms(); paintModal();
+}
+
 async function openGlossary() {
   moreOpen = false;
   await loadTerms();
@@ -560,14 +749,30 @@ document.addEventListener('mouseover', e => {
   tip.innerHTML = `<b class="t">${esc(el.dataset.term)}</b>` +
     (t && t.description.trim() ? md(t.description)
       : '<span style="color:#aaa">설명이 없습니다. 용어 사전에서 작성하세요.</span>');
+  clearTimeout(tipTimer);
   tip.hidden = false;
   const r = el.getBoundingClientRect(), b = tip.getBoundingClientRect();
   tip.style.top = (r.bottom + 8 + b.height > innerHeight ? r.top - b.height - 8 : r.bottom + 8) + 'px';
   tip.style.left = Math.max(8, Math.min(r.left, innerWidth - b.width - 12)) + 'px';
 });
-document.addEventListener('mouseout', e => {
-  if (e.target.closest && e.target.closest('.term')) tipEl().hidden = true;
+// 본문·용어 설명의 링크는 항상 새 탭에서 (내장 브라우저에서도 현재 창을 벗어나지 않게)
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('.desc-md a, .prd-doc a, .gdesc a, #termtip a');
+  if (!a || !a.href) return;
+  e.preventDefault();
+  const w = window.open(a.href, '_blank', 'noopener');
+  if (!w) toast('새 탭이 차단되었습니다: ' + a.href);
 });
+
+let tipTimer = null;
+const keepTip = () => { clearTimeout(tipTimer); };
+const dropTip = () => { tipTimer = setTimeout(() => { tipEl().hidden = true; }, 250); };
+document.addEventListener('mouseout', e => {
+  if (e.target.closest && e.target.closest('.term')) dropTip();
+});
+// 말풍선 위로 마우스가 넘어오면 유지 (안의 링크를 누를 수 있게)
+document.getElementById('termtip').addEventListener('mouseenter', keepTip);
+document.getElementById('termtip').addEventListener('mouseleave', () => { tipEl().hidden = true; });
 
 // ---------- 이미지 앨범 ----------
 let album = { open: false, items: [], sel: new Set() };
@@ -760,6 +965,14 @@ const MV = id => `<button class="mv" title="위로" onclick="event.stopPropagati
 // ---------- rendering ----------
 function render() {
   const c = document.getElementById('content');
+  // 다시 그릴 때 스크롤이 맨 위로 튀지 않도록 위치를 기억한다
+  const keep = { top: c.scrollTop, left: c.scrollLeft,
+                 list: c.querySelector('.dir-list')?.scrollTop || 0 };
+  restoreScroll = () => {
+    c.scrollTop = keep.top; c.scrollLeft = keep.left;
+    const l = c.querySelector('.dir-list');
+    if (l) l.scrollTop = keep.list;
+  };
   c.onclick = null;
   const has = !!project;
   if (!editingName) document.getElementById('proj-name').textContent = has ? project.name : '';
@@ -767,8 +980,9 @@ function render() {
   const nameEl = document.getElementById('proj-name');
   const canRename = has && !!auth && !shareToken;
   nameEl.classList.toggle('editable', canRename);
-  nameEl.onclick = canRename ? editProjectName : null;
-  nameEl.title = canRename ? '클릭하여 이름 수정' : '';
+  nameEl.onclick = null;
+  nameEl.ondblclick = canRename ? editProjectName : null;
+  nameEl.title = canRename ? '더블클릭하여 이름 수정' : '';
   const homeBtn = document.getElementById('btn-projects');
   homeBtn.onclick = goHome;
   homeBtn.title = '홈 (내 프로젝트)';
@@ -783,7 +997,9 @@ function render() {
       <div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>
       <div class="fitem act" onclick="openAlbum()">이미지 앨범<br><small>업로드한 이미지 보기 · 링크 복사 · 삭제</small></div>
     </div>` : ''}` : '';
-  document.getElementById('contenttools').style.display = has && tab === 'spec' ? 'flex' : 'none';
+  const showTools = has && tab === 'spec';
+  document.getElementById('contenttools').style.display = showTools ? 'flex' : 'none';
+  document.getElementById('contentleft').style.display = showTools ? 'flex' : 'none';
   const fEl = document.getElementById('impfilter');
   const label = !filterOn() ? '전체' : (MOSCOW.filter(m => impFilter.has(m.v)).map(m => m.ko).join(', ') || '없음');
   fEl.innerHTML = `<button class="btn" onclick="event.stopPropagation();toggleFilterMenu()">중요도: ${label} ▾</button>
@@ -799,13 +1015,19 @@ function render() {
     renderProjects(c);
     document.getElementById('panel').classList.remove('open');
     document.getElementById('album').hidden = true;
+    restoreScroll();
     return;
   }
   document.getElementById('tab-spec').classList.toggle('active', tab === 'spec');
   document.getElementById('tab-prd').classList.toggle('active', tab === 'prd');
   document.getElementById('view-tree').classList.toggle('active', view === 'tree');
   document.getElementById('view-dir').classList.toggle('active', view === 'dir');
-  if (tab === 'prd') { renderPrd(c); document.getElementById('panel').classList.remove('open'); return; }
+  if (tab === 'prd') {
+    renderPrd(c);
+    document.getElementById('panel').classList.remove('open');
+    restoreScroll();
+    return;
+  }
   renderAlbum();
   if (modalRender) paintModal();
   if (view === 'tree') {
@@ -814,6 +1036,7 @@ function render() {
     c.onclick = e => { if (selectedId != null && !e.target.closest('.node-card')) closePanel(); };
   }
   else { renderDir(c); document.getElementById('panel').classList.remove('open'); }
+  restoreScroll();
 }
 
 // ---------- projects ----------
@@ -1028,12 +1251,20 @@ window.addEventListener('resize', drawLinks);
 
 function renderDir(c) {
   // render every depth, not just two levels
-  const item = (n, num, depth) => `
+  const item = (n, num, depth) => {
+    const kids = shownChildren(n.id, num);
+    const closed = collapsed.has(n.id);
+    return `
       <div class="dir-item ${depth ? 'child' : ''} ${n.id === selectedId ? 'selected' : ''}"
-           style="margin-left:${depth * 22}px" onclick="select(${n.id})" ${DND(n.id)} ${DROP(n.id)}>
+           data-id="${n.id}" style="margin-left:${depth * 22}px" onclick="select(${n.id})" ${DND(n.id)} ${DROP(n.id)}>
+        ${kids.length
+          ? `<button class="toggle" title="${closed ? '펼치기' : '접기'}"
+               onclick="event.stopPropagation();toggleCollapse(${n.id})">${closed ? '▶' : '▼'}</button>`
+          : '<span style="display:inline-block;width:11px"></span>'}
         ${GRIP}<span class="num">${num}</span>
         <span style="flex:1${depth ? '' : ';font-weight:600'}">${esc(n.title)}</span>${impSelect(n)}${MV(n.id)}
-      </div>` + shownChildren(n.id, num).map(([k, kn]) => item(k, kn, depth + 1)).join('');
+      </div>` + (closed ? '' : kids.map(([k, kn]) => item(k, kn, depth + 1)).join(''));
+  };
   const list = shownChildren(null, '').map(([g, num]) =>
     `<div class="dir-group">${item(g, num, 0)}</div>`).join('')
     || `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : ''}</p>`;
@@ -1057,7 +1288,7 @@ function renderPanel() {
 // rendered detail shared by the tree side panel and the directory pane
 function detailBody(n, withClose) {
   return `<div class="detail">
-    <h1 title="클릭하여 수정" onclick="editField(this,${n.id},'title')">${esc(n.title)}</h1>
+    <h1 title="더블클릭하여 수정" ondblclick="editField(this,${n.id},'title')">${esc(n.title)}</h1>
     <div class="meta">
       <span>ID N-${String(n.id).padStart(4, '0')}</span>
       <select class="pill-select" onchange="saveField(${n.id},'status',this.value)">
@@ -1066,7 +1297,7 @@ function detailBody(n, withClose) {
         ${MOSCOW.map(m => `<option value="${m.v}" ${m.v === n.importance ? 'selected' : ''}>${m.ko} (${m.en})</option>`).join('')}</select>
     </div>
     <hr class="sep">
-    <div class="desc-md" title="클릭하여 수정" onclick="editField(this,${n.id},'description')">
+    <div class="desc-md" title="더블클릭하여 수정" ondblclick="descClick(event,this,${n.id})">
       ${md(n.description) || '<p class="ph">설명이 없습니다. 클릭하여 작성하세요.</p>'}</div>
     <div class="btnrow">
       ${canAddChild(n) ? `<button class="btn" onclick="addNode(${n.id})">+ 하위 추가</button>` : ''}
@@ -1084,6 +1315,12 @@ function detailBody(n, withClose) {
       </div>`
       : '<p style="color:#aaa;font-size:13px">코멘트를 작성하려면 로그인하세요.</p>'}
   </div>`;
+}
+
+// 링크는 브라우저가 열고, 용어는 용어 사전으로. 그 밖을 누르면 편집
+function descClick(e, el, id) {
+  if (e.target.closest('a') || e.target.closest('.term')) return;
+  editField(el, id, 'description');
 }
 
 // swap the rendered field for an editor in place; blur/Ctrl+Enter saves, Esc cancels
@@ -1155,15 +1392,59 @@ async function deleteComment(id, nodeId) {
   loadComments(nodeId);
 }
 
+let prdCaret = null;   // 편집 화면에서 커서를 놓을 위치
+
 function renderPrd(c) {
   c.innerHTML = prdEditing
     ? `<div class="toolbar"><button class="btn primary" onclick="savePrd()">저장</button>
          <button class="btn" onclick="prdEditing=false;render()">취소</button></div>
        <textarea id="prd-edit">${esc(prdContent)}</textarea>
        <div class="edtools" id="prd-tools" style="max-width:820px;margin:0 auto"></div>`
-    : `<div class="toolbar"><button class="btn primary" onclick="prdEditing=true;render()">편집</button></div>
-       <div class="prd-doc">${md(prdContent)}</div>`;
-  if (prdEditing) enableImages(document.getElementById('prd-edit'), document.getElementById('prd-tools'));
+    : `<div class="toolbar"><span class="hint" style="margin:0">본문을 더블클릭하면 그 자리에서 편집합니다</span></div>
+       <div class="prd-doc" ondblclick="prdClickEdit(event)" title="더블클릭하여 수정">${md(prdContent)}</div>`;
+  if (!prdEditing) return;
+  const box = document.getElementById('prd-edit');
+  enableImages(box, document.getElementById('prd-tools'));
+  if (prdCaret == null) return;
+  const at = Math.max(0, Math.min(prdCaret, box.value.length));
+  prdCaret = null;
+  box.focus();
+  box.setSelectionRange(at, at);
+  // 커서가 화면에 보이도록 스크롤
+  const lh = parseFloat(getComputedStyle(box).lineHeight) || 22;
+  const line = box.value.slice(0, at).split('\n').length - 1;
+  box.scrollTop = Math.max(0, line * lh - box.clientHeight / 2);
+}
+
+// 클릭한 지점을 마크다운 원문 위치로 옮겨 편집 화면을 연다
+function prdClickEdit(e) {
+  if (e.target.closest('a')) return;              // 링크는 브라우저가 열도록
+  if (e.target.closest('.term')) return;          // 용어 클릭은 용어 사전
+  const block = e.target.closest('p,h1,h2,h3,li');
+  let offset = 0;
+  if (block) {
+    // 클릭 지점까지의 글자 수 (블록 기준)
+    let inBlock = 0;
+    const pos = document.caretPositionFromPoint
+      ? document.caretPositionFromPoint(e.clientX, e.clientY) : null;
+    let node = pos && pos.offsetNode, nodeOffset = pos ? pos.offset : 0;
+    if (!node && document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(e.clientX, e.clientY);
+      if (r) { node = r.startContainer; nodeOffset = r.startOffset; }
+    }
+    if (node && block.contains(node)) {
+      const r = document.createRange();
+      r.selectNodeContents(block);
+      r.setEnd(node, nodeOffset);
+      inBlock = r.toString().length;
+    }
+    const text = (block.textContent || '').trim();
+    const idx = text ? prdContent.indexOf(text.slice(0, 40)) : -1;
+    if (idx >= 0) offset = idx + inBlock;
+  }
+  prdCaret = offset;
+  prdEditing = true;
+  render();
 }
 
 // ---------- actions ----------
@@ -1172,6 +1453,9 @@ function setView(v) { view = v; render(); }
 function select(id) { selectedId = selectedId === id ? null : id; render(); }
 function closePanel() { selectedId = null; render(); }
 function toggleCollapse(id) { collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); render(); }
+const hasKids = id => nodes.some(n => n.parent_id === id);
+function collapseAll() { collapsed = new Set(nodes.filter(n => hasKids(n.id)).map(n => n.id)); render(); }
+function expandAll() { collapsed = new Set(); render(); }
 
 async function boot() {
   if (shareToken) {
