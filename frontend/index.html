@@ -136,6 +136,22 @@
   .detail .sep { border: none; border-top: 1px solid #eee; margin: 16px 0; }
   .desc-md { cursor: text; padding: 10px; margin: -10px; border-radius: 8px; min-height: 70px; line-height: 1.75; }
   .desc-md .ph { color: #bbb; }
+  /* ---- 용어 사전 ---- */
+  .term { border-bottom: 1px dashed #8a9bd0; color: #46538a; cursor: help; padding: 0 1px; }
+  .term:hover { background: #eef1fb; }
+  #termtip { position: fixed; z-index: 300; max-width: 320px; background: #fff; color: #333;
+    border: 1px solid #d9d9d3; border-radius: 8px; padding: 10px 13px; font-size: 13px;
+    line-height: 1.6; box-shadow: 0 8px 24px rgba(0,0,0,.14); pointer-events: none; }
+  #termtip[hidden] { display: none; }
+  #termtip b.t { display: block; font-size: 12px; color: #46538a; margin-bottom: 4px; }
+  .gtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .gtable th { text-align: left; font-size: 12px; color: #888; font-weight: 600;
+    border-bottom: 1px solid #eee; padding: 6px 8px; }
+  .gtable td { border-bottom: 1px solid #f2f2ee; padding: 9px 8px; vertical-align: top; }
+  .gterm { font-family: Consolas, monospace; color: #46538a; background: #eef1fb;
+    padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .gdesc { cursor: text; border-radius: 6px; }
+  .gdesc:hover { background: #f6f6f3; }
   .pill-select { border: 1px solid #e2e2dd; background: #f7f7f5; border-radius: 20px;
     padding: 3px 10px; font-size: 12px; color: #555; font-family: inherit; cursor: pointer; }
   .inline-edit { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid #6b7fd7;
@@ -164,6 +180,7 @@
   <div class="hgroup">
     <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="PRD & 기능명세서" height="28"></button>
     <b id="proj-name"></b>
+    <button class="btn ibtn" id="btn-glossary" onclick="openGlossary()" title="용어 사전" aria-label="용어 사전"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H4.5v16H8M16 4h3.5v16H16"/><path d="M8.5 15l2.2-6 2.2 6M9.2 13h3.1M15 15V9"/></svg></button>
   </div>
   <div class="tabs" id="tabs">
     <button id="tab-prd" class="active" onclick="setTab('prd')">PRD</button>
@@ -176,6 +193,7 @@
 </header>
 <div id="toast"></div>
 <div id="modal" hidden></div>
+<div id="termtip" hidden></div>
 <main>
   <div id="contentwrap">
     <div id="contenttools">
@@ -246,7 +264,7 @@ async function saveVersion() {
 async function restoreVersion(id) {
   try {
     const r = await api(`/api/versions/${id}/restore`, { method: 'POST' });
-    nodes = await reloadNodes();
+    nodes = await reloadNodes(); await loadTerms();
     selectedId = null; closeModal(); render();
     toast(`해당 시점으로 되돌렸습니다 (항목 ${r.restored}개)`);
   } catch (e) { toast(e.detail || '불러오기 실패'); }
@@ -276,7 +294,8 @@ function twoStep(key, fn) {
   pending = null; fn();
 }
 const askLabel = (key, normal) => pending === key ? '한 번 더 클릭' : normal;
-const shareToken = new URLSearchParams(location.search).get('share');
+let shareToken = new URLSearchParams(location.search).get('share');
+let invalidShare = false;
 
 let auth = null;
 try { auth = JSON.parse(localStorage.getItem('auth')); } catch (e) {}
@@ -333,8 +352,12 @@ const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&
 
 // minimal markdown: #/##/### headings, - bullets, blank-line paragraphs
 // ![alt](url) → <img>. 우리 이미지 API와 http(s) 주소만 허용한다
-const inline = t => esc(t).replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) =>
-  /^(\/api\/images\/[\w-]+|https?:\/\/)/.test(url) ? `<img src="${url}" alt="${alt}" loading="lazy">` : m);
+const inline = t => esc(t)
+  .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) =>
+    /^(\/api\/images\/[\w-]+|https?:\/\/)/.test(url) ? `<img src="${url}" alt="${alt}" loading="lazy">` : m)
+  // `용어` → 용어 사전 링크
+  .replace(/`([^`\n]{1,60})`/g, (m, w) =>
+    `<span class="term" data-term="${w.trim()}" onclick="openGlossary()">${w}</span>`);
 
 function md(text) {
   const out = []; let ul = false;
@@ -467,6 +490,84 @@ function exportMarkdown() {
   moreOpen = false; render();
   toast('마크다운 파일을 내려받았습니다.');
 }
+
+// ---------- 용어 사전 ----------
+let terms = [];
+const termOf = w => terms.find(t => t.term.toLowerCase() === String(w).toLowerCase());
+
+async function loadTerms() {
+  if (!project) return;
+  terms = await api(`/api/projects/${project.id}/terms`).catch(() => []);
+}
+
+function glossaryHTML() {
+  return `<h3 style="margin-bottom:6px">용어 사전</h3>
+    <p class="hint" style="margin:0 0 14px">본문에서 <code>&#96;용어&#96;</code> 처럼 백틱으로 감싸면 자동으로 등록되고,
+      어디에서도 쓰이지 않으면 자동으로 사라집니다. 설명은 마크다운으로 쓸 수 있습니다.</p>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn" onclick="closeModal()">닫기</button>
+    </div>
+    ${terms.length ? `<table class="gtable">
+      <thead><tr><th style="width:130px">용어</th><th>설명</th></tr></thead>
+      <tbody>${terms.map(t => `<tr>
+        <td><span class="gterm">${esc(t.term)}</span></td>
+        <td class="gdesc" title="클릭하여 수정" onclick="editTermDesc(this,${t.id})">${
+          md(t.description) || '<span style="color:#bbb">클릭하여 설명 작성</span>'}</td>
+      </tr>`).join('')}</tbody></table>`
+      : '<p style="color:#aaa;padding:14px 0">등록된 용어가 없습니다. 본문에 백틱으로 용어를 감싸보세요.</p>'}`;
+}
+async function openGlossary() {
+  moreOpen = false;
+  await loadTerms();
+  showModal(glossaryHTML);
+}
+function editTermDesc(el, id) {
+  const t = terms.find(x => x.id === id);
+  if (!t) return;
+  const box = document.createElement('textarea');
+  box.className = 'inline-edit';
+  box.style.minHeight = '110px';
+  box.value = t.description;
+  el.replaceWith(box);
+  box.focus();
+  let done = false;
+  const finish = async save => {
+    if (done) return;
+    done = true;
+    if (save && box.value !== t.description) {
+      try {
+        const r = await api('/api/terms/' + id, { method: 'PUT',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: box.value }) });
+        t.description = r.description;
+      } catch (e) { toast(e.detail || '설명 저장 실패'); }
+    }
+    paintModal();
+  };
+  box.addEventListener('blur', () => finish(true));
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Escape') finish(false);
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); finish(true); }
+  });
+}
+
+// 본문의 용어에 마우스를 올리면 설명을 띄운다
+const tipEl = () => document.getElementById('termtip');
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest && e.target.closest('.term');
+  if (!el) return;
+  const t = termOf(el.dataset.term);
+  const tip = tipEl();
+  tip.innerHTML = `<b class="t">${esc(el.dataset.term)}</b>` +
+    (t && t.description.trim() ? md(t.description)
+      : '<span style="color:#aaa">설명이 없습니다. 용어 사전에서 작성하세요.</span>');
+  tip.hidden = false;
+  const r = el.getBoundingClientRect(), b = tip.getBoundingClientRect();
+  tip.style.top = (r.bottom + 8 + b.height > innerHeight ? r.top - b.height - 8 : r.bottom + 8) + 'px';
+  tip.style.left = Math.max(8, Math.min(r.left, innerWidth - b.width - 12)) + 'px';
+});
+document.addEventListener('mouseout', e => {
+  if (e.target.closest && e.target.closest('.term')) tipEl().hidden = true;
+});
 
 // ---------- 이미지 앨범 ----------
 let album = { open: false, items: [], sel: new Set() };
@@ -662,16 +763,16 @@ function render() {
   c.onclick = null;
   const has = !!project;
   if (!editingName) document.getElementById('proj-name').textContent = has ? project.name : '';
+  document.getElementById('btn-glossary').style.display = has ? 'inline-flex' : 'none';
   const nameEl = document.getElementById('proj-name');
   const canRename = has && !!auth && !shareToken;
   nameEl.classList.toggle('editable', canRename);
   nameEl.onclick = canRename ? editProjectName : null;
   nameEl.title = canRename ? '클릭하여 이름 수정' : '';
   const homeBtn = document.getElementById('btn-projects');
-  const canHome = !!auth && !shareToken;
-  homeBtn.onclick = canHome ? goProjects : null;
-  homeBtn.title = canHome ? '내 프로젝트' : 'PRD & 기능명세서';
-  homeBtn.classList.toggle('plain', !canHome);
+  homeBtn.onclick = goHome;
+  homeBtn.title = '홈 (내 프로젝트)';
+  homeBtn.classList.remove('plain');
   document.getElementById('tabs').style.display = has ? '' : 'none';
   document.getElementById('viewtoggle').style.display = has && tab === 'spec' ? '' : 'none';
   const mEl = document.getElementById('moremenu');
@@ -717,13 +818,17 @@ function render() {
 
 // ---------- projects ----------
 function renderProjects(c) {
+  const notice = invalidShare
+    ? `<p style="max-width:780px;margin:0 auto 16px;padding:12px 16px;border-radius:8px;
+         background:#fdeceb;color:#b0392c;font-size:13px">유효하지 않은 공유 링크입니다. 링크가 해제되었거나 만료되었습니다.</p>`
+    : '';
   if (!auth) {
-    c.innerHTML = `<p style="margin:80px auto;text-align:center;color:#888;line-height:1.9">
+    c.innerHTML = notice + `<p style="margin:60px auto;text-align:center;color:#888;line-height:1.9">
       로그인하면 프로젝트를 만들고 관리할 수 있습니다.<br>
       공유 링크를 받았다면 그 주소로 접속하세요.</p>`;
     return;
   }
-  c.innerHTML = `<div style="max-width:780px;margin:20px auto">
+  c.innerHTML = notice + `<div style="max-width:780px;margin:20px auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <h2 style="font-size:20px">내 프로젝트</h2>
       <button class="btn primary" onclick="createProject()">+ 새 프로젝트</button>
@@ -746,14 +851,21 @@ async function openProjectData() {
   const [n, p] = await Promise.all([
     api(`/api/projects/${project.id}/nodes`), api(`/api/projects/${project.id}/prd`)]);
   nodes = n; prdContent = p.content;
+  await loadTerms();
 }
 async function openProject(id) {
   project = projects.find(p => p.id === id);
   selectedId = null; collapsed = new Set();
   await openProjectData(); render();
 }
+// 공유 링크로 보는 중이면 share 파라미터를 떼고 홈으로 나간다
+function goHome() {
+  if (shareToken) { location.href = location.origin + '/'; return; }
+  goProjects();
+}
 function goProjects() {
   project = null; selectedId = null;
+  album.open = false;
   loadProjects().then(render);
 }
 async function createProject() {
@@ -1009,7 +1121,9 @@ function editField(el, id, field) {
 async function saveField(id, field, value) {
   await api('/api/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ [field]: value }) });
-  nodes = await reloadNodes(); render();
+  nodes = await reloadNodes();
+  if (field === 'description') await loadTerms();
+  render();
 }
 
 async function loadComments(nodeId) {
@@ -1064,7 +1178,12 @@ async function boot() {
     try {
       project = await api('/api/shared/' + shareToken);
       await openProjectData();
-    } catch (e) { document.getElementById('content').innerHTML = '<p style="margin:80px auto;text-align:center;color:#c0392b">유효하지 않은 공유 링크입니다.</p>'; return; }
+    } catch (e) {
+      // 링크가 만료·해제된 경우: 일반 화면으로 떨어뜨려 홈 버튼 등이 계속 동작하게 한다
+      shareToken = null; invalidShare = true; project = null;
+      history.replaceState(null, '', location.pathname);   // 쓸모없어진 share 파라미터 제거
+      if (auth) await loadProjects();
+    }
   } else if (auth) {
     await loadProjects();
   }
@@ -1088,12 +1207,13 @@ async function addNode(parentId) {
 async function removeNode(id) {
   await api('/api/nodes/' + id, { method: 'DELETE' });
   if (selectedId === id) selectedId = null;
-  nodes = await reloadNodes(); render();
+  nodes = await reloadNodes(); await loadTerms(); render();
 }
 async function savePrd() {
   prdContent = document.getElementById('prd-edit').value;
   await api(`/api/projects/${project.id}/prd`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: prdContent }) });
+  await loadTerms();
   prdEditing = false; render();
 }
 
