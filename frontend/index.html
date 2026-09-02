@@ -45,8 +45,8 @@
   /* ---- tree view (horizontal mindmap) ---- */
   .tree { display: flex; align-items: center; min-height: 100%; padding: 20px; width: max-content; }
   .mm-branch { display: flex; align-items: center; }
-  .mm-children { display: flex; flex-direction: column; justify-content: center; margin-left: 56px; }
-  .mm-child { position: relative; display: flex; align-items: center; padding: 10px 0; }
+  .mm-children { display: flex; flex-direction: column; justify-content: center; margin-left: 56px; gap: 20px; }
+  .mm-child { position: relative; display: flex; align-items: center; }
   .tree { position: relative; }
   .tree svg.links { position: absolute; left: 0; top: 0; pointer-events: none; }
   .mv { border: none; background: none; cursor: pointer; color: #bbb; padding: 0 1px; font-size: 10px; }
@@ -109,7 +109,7 @@
     background: #eef; color: #667; border-radius: 5px; font-size: 12px; }
   .dir-item.child { margin-left: 28px; }
   .dir-item.child .num { background: #f2f2ef; }
-  .dir-group { border-bottom: 1px solid #eee; padding: 6px 0; }
+  .dir-top { border-top: 1px solid #eee; margin-top: 6px; padding-top: 7px; }
   .dir-detail { flex: 1; overflow: auto; padding: 46px 32px 8px; }
   /* ---- detail panel ---- */
   #panel { width: 460px; background: #fff; border-left: 1px solid #e5e5e0; padding: 24px 28px; overflow: auto; display: none; }
@@ -162,6 +162,10 @@
     border-color: #d6ddf2; background: #f5f7fd; }
   .btn.goto:hover { background: #e8edfb; }
   .desc-md a, .prd-doc a, #termtip a, .gdesc a { color: #2f62c4; text-decoration: underline; }
+  .md-tw { overflow-x: auto; margin: 10px 0; }
+  .md-tw table { border-collapse: collapse; font-size: 13px; }
+  .md-tw th, .md-tw td { border: 1px solid #e2e2dd; padding: 6px 11px; line-height: 1.6; }
+  .md-tw th { background: #f6f6f3; font-weight: 600; white-space: nowrap; }
   .mv[disabled] { opacity: .3; cursor: default; }
   .pill-select { border: 1px solid #e2e2dd; background: #f7f7f5; border-radius: 20px;
     padding: 3px 10px; font-size: 12px; color: #555; font-family: inherit; cursor: pointer; }
@@ -414,21 +418,63 @@ function inline(raw) {
     pre + stash(`<a href="${safeHref(url)}" target="_blank" rel="noopener">${url}</a>`));
   // `용어` → 용어 사전 링크
   t = t.replace(/`([^`\n]{1,60})`/g, (m, w) =>
-    `<span class="term" data-term="${w.trim()}" onclick="openGlossary()">${w}</span>`);
+    stash(`<span class="term" data-term="${w.trim()}" onclick="openGlossary()">${w}</span>`));
+  // **굵게** / *기울임* / _기울임_
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, (m, w) => stash(`<strong>${w}</strong>`));
+  t = t.replace(/\*([^*\n]+)\*/g, (m, w) => stash(`<em>${w}</em>`));
+  t = t.replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s.,;:)!?])/g, (m, pre, w) => pre + stash(`<em>${w}</em>`));
   return t.replace(/\u0000(\d+)\u0000/g, (m, i) => keep[i]);
 }
 
 function md(text) {
-  const out = []; let ul = false;
-  for (const line of text.split('\n')) {
-    const t = line.trim();
-    if (t.startsWith('- ')) { if (!ul) { out.push('<ul>'); ul = true; } out.push('<li>' + inline(t.slice(2)) + '</li>'); continue; }
-    if (ul) { out.push('</ul>'); ul = false; }
+  const lines = text.split('\n');
+  const out = [];
+  let ul = false;
+  const closeUl = () => { if (ul) { out.push('</ul>'); ul = false; } };
+  const isRow = s => /^\s*\|.*\|\s*$/.test(s);
+  const cellsOf = s => s.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+  const isSep = s => isRow(s) && cellsOf(s).every(c => /^:?-{2,}:?$/.test(c));
+  const skipBlank = i => { while (i < lines.length && !lines[i].trim()) i++; return i; };
+
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (!t) continue;
+
+    // | 머리 | 글 |  +  |---|---|  → 표 (줄 사이 빈 줄도 허용)
+    if (isRow(t)) {
+      const sepAt = skipBlank(i + 1);
+      if (sepAt < lines.length && isSep(lines[sepAt])) {
+        closeUl();
+        const align = cellsOf(lines[sepAt]).map(c =>
+          c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : 'left');
+        const cell = (c, x, tag) =>
+          `<${tag} style="text-align:${align[x] || 'left'}">${inline(c)}</${tag}>`;
+        const head = cellsOf(t).map((c, x) => cell(c, x, 'th')).join('');
+        const body = [];
+        let k = sepAt + 1;
+        while (k < lines.length) {
+          const nb = skipBlank(k);
+          if (nb >= lines.length || !isRow(lines[nb])) break;
+          body.push('<tr>' + cellsOf(lines[nb]).map((c, x) => cell(c, x, 'td')).join('') + '</tr>');
+          k = nb + 1;
+        }
+        out.push(`<div class="md-tw"><table><thead><tr>${head}</tr></thead><tbody>${body.join('')}</tbody></table></div>`);
+        i = k - 1;
+        continue;
+      }
+    }
+
+    if (t.startsWith('- ')) {
+      if (!ul) { out.push('<ul>'); ul = true; }
+      out.push('<li>' + inline(t.slice(2)) + '</li>');
+      continue;
+    }
+    closeUl();
     const h = t.match(/^(#{1,3})\s+(.*)/);
-    if (h) out.push(`<h${h[1].length}>${esc(h[2])}</h${h[1].length}>`);
-    else if (t) out.push('<p>' + inline(t) + '</p>');
+    if (h) out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
+    else out.push('<p>' + inline(t) + '</p>');
   }
-  if (ul) out.push('</ul>');
+  closeUl();
   return out.join('');
 }
 
@@ -678,9 +724,41 @@ function gotoNode(id) {
   selectedId = id;
   render();
   setTimeout(() => {
-    const el = document.querySelector(`.node-card[data-id="${id}"], .dir-item[data-id="${id}"]`);
-    el?.scrollIntoView({ block: 'center', inline: 'center' });
+    scrollToNode(id);
+    document.querySelector(`.node-card[data-id="${id}"], .dir-item[data-id="${id}"]`)
+      ?.scrollIntoView({ block: 'center', inline: 'center' });
   }, 60);
+}
+
+// 가상 스크롤에서는 대상이 아직 DOM 에 없을 수 있어, 위치를 계산해 먼저 그 구간으로 스크롤한다
+function treeYOf(id) {
+  if (!leafMemo) leafMemo = new Map();
+  const path = [];
+  for (let cur = nodeById(id); cur; cur = nodeById(cur.parent_id)) path.unshift(cur);
+  let y = 0, sibs = shownChildren(null, '');
+  for (const node of path) {
+    for (const [sib] of sibs) {
+      if (sib.id === node.id) break;
+      y += spanH(sib) + TREE_GAP;
+    }
+    sibs = shownChildren(node.id, '');
+  }
+  return y + spanH(nodeById(id)) / 2;
+}
+function scrollToNode(id) {
+  if (view === 'tree') {
+    const c = document.getElementById('content');
+    if (!c || !nodeById(id)) return;
+    c.scrollTop = Math.max(0, treeYOf(id) - c.clientHeight / 2);
+    renderTree(c);
+  } else {
+    const list = document.querySelector('.dir-list');
+    if (!list) return;
+    const i = dirRows.findIndex(r => r.n.id === id);
+    if (i < 0) return;
+    list.scrollTop = Math.max(0, dirTops[i] - list.clientHeight / 2);
+    paintDirList();
+  }
 }
 
 async function setTermCat(id, value) {
@@ -1049,11 +1127,12 @@ function render() {
     return;
   }
   if (view === 'tree') {
+    c.onscroll = () => onTreeScroll(c);
     renderTree(c); renderPanel();
     // 빈 배경을 클릭하면 사이드 패널을 닫는다
     c.onclick = e => { if (selectedId != null && !e.target.closest('.node-card')) closePanel(); };
   }
-  else { renderDir(c); document.getElementById('panel').classList.remove('open'); }
+  else { c.onscroll = null; renderDir(c); document.getElementById('panel').classList.remove('open'); }
   restoreScroll();
 }
 
@@ -1097,6 +1176,7 @@ async function openProjectData() {
 async function openProject(id) {
   project = projects.find(p => p.id === id);
   selectedId = null; collapsed = new Set();
+  commentCache.clear(); panelStamp = '';
   await openProjectData(); render();
 }
 // 공유 링크로 보는 중이면 share 파라미터를 떼고 홈으로 나간다
@@ -1197,8 +1277,51 @@ function copyShare(token) {
   copyText(url).then(ok => toast((ok ? '공유 링크가 복사되었습니다:' : '공유 링크:') + '\n' + url));
 }
 
+// ---------- 트리 가상 스크롤 ----------
+const TREE_GAP = 20;          // .mm-children gap 과 같아야 한다
+const TREE_BUFFER = 800;      // 화면 위·아래로 미리 그려두는 여유 픽셀
+let CARD_H = 38, leafMemo = null;
+// 이 가지가 차지하는 세로 줄 수(=말단 개수). 접힘·필터를 반영한다
+function leafCount(n) {
+  const hit = leafMemo.get(n.id);
+  if (hit) return hit;
+  const kids = collapsed.has(n.id) ? [] : shownChildren(n.id, '');
+  let v = 0;
+  if (!kids.length) v = 1;
+  else for (const [k] of kids) v += leafCount(k);
+  leafMemo.set(n.id, v);
+  return v;
+}
+const spanH = n => { const L = leafCount(n); return L * CARD_H + (L - 1) * TREE_GAP; };
+let treeScrollAt = 0, treeTick = false;
+function onTreeScroll(c) {
+  if (treeTick) return;
+  if (Math.abs(c.scrollTop - treeScrollAt) < TREE_BUFFER / 2) return;
+  treeTick = true;
+  requestAnimationFrame(() => {
+    treeTick = false;
+    if (view === 'tree' && tab === 'spec' && project) { renderTree(c); }
+  });
+}
+
 function renderTree(c) {
-  const branch = (n, num, depth, rootIdx) => {
+  leafMemo = new Map();
+  const probe = c.querySelector('.node-card');       // 이전 렌더에서 실제 카드 높이를 재둔다
+  if (probe) CARD_H = probe.getBoundingClientRect().height || CARD_H;   // 반올림하면 오차가 누적된다
+  const winTop = c.scrollTop - TREE_BUFFER, winBot = c.scrollTop + c.clientHeight + TREE_BUFFER;
+  treeScrollAt = c.scrollTop;
+  // 화면 밖 가지는 같은 높이의 빈 칸으로만 남긴다 (스크롤 길이는 그대로)
+  const kidsHTML = (kids, top, render) => {
+    let y = top;
+    return kids.map(entry => {
+      const h = spanH(entry[0]), y0 = y;
+      y += h + TREE_GAP;
+      return (y0 + h < winTop || y0 > winBot)
+        ? `<div class="mm-child" style="height:${h}px"></div>`
+        : `<div class="mm-child">${render(entry, y0)}</div>`;
+    }).join('');
+  };
+  const branch = (n, num, depth, rootIdx, top) => {
     const kids = shownChildren(n.id, num);
     const closed = collapsed.has(n.id);
     const color = depth === 0 ? 'c' + (rootIdx % 7) : 'cchild';
@@ -1210,16 +1333,16 @@ function renderTree(c) {
         ${MV(n.id)}
         ${kids.length ? `<button class="toggle" onclick="event.stopPropagation();toggleCollapse(${n.id})">${closed ? '▶' : '◀'}</button>` : ''}
       </span>
-      ${kids.length && !closed ? `<div class="mm-children">${kids.map(([k, kn]) =>
-        `<div class="mm-child">${branch(k, kn, depth + 1, rootIdx)}</div>`).join('')}</div>` : ''}
+      ${kids.length && !closed
+        ? `<div class="mm-children">${kidsHTML(kids, top, ([k, kn], y) => branch(k, kn, depth + 1, rootIdx, y))}</div>`
+        : ''}
     </div>`;
   };
   const roots = shownChildren(null, '');
   const empty = filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : '항목이 없습니다. 대분류를 추가하세요.';
   c.innerHTML = `<div class="tree"><svg class="links"></svg><div class="mm-branch">
     <span class="node-card mm-root" data-id="root" ${DROP(null)} title="여기에 드롭하면 대분류가 됩니다">PRD</span>
-    <div class="mm-children">${roots.map(([n, num], i) =>
-      `<div class="mm-child">${branch(n, num, 0, i)}</div>`).join('')}
+    <div class="mm-children">${kidsHTML(roots, 0, ([n, num], y) => branch(n, num, 0, roots.findIndex(r => r[0].id === n.id), y))}
       ${roots.length ? '' : `<div class="mm-child"><span style="color:#aaa">${empty}</span></div>`}
       <div class="mm-child">
         <span class="node-card ghost" data-id="ghost" onclick="addNode(null)"
@@ -1268,13 +1391,33 @@ function drawLinks() {
 }
 window.addEventListener('resize', drawLinks);
 
-function renderDir(c) {
-  // render every depth, not just two levels
-  const item = (n, num, depth) => {
-    const kids = shownChildren(n.id, num);
-    const closed = collapsed.has(n.id);
-    return `
-      <div class="dir-item ${depth ? 'child' : ''} ${n.id === selectedId ? 'selected' : ''}"
+// ---------- 디렉토리 뷰 가상 스크롤 ----------
+let dirRows = [], dirTops = [], dirTotal = 0, DIR_ROW_H = 38, dirScrollAt = 0, dirTick = false;
+const DIR_GROUP_EXTRA = 14;   // .dir-top 의 margin-top + padding-top + border
+const DIR_BUFFER = 500;
+
+function buildDirRows() {      // 보이는 줄만 평탄화 (접힘·필터 반영)
+  dirRows = [];
+  const walk = (entries, depth) => {
+    for (const [n, num] of entries) {
+      dirRows.push({ n, num, depth });
+      if (!collapsed.has(n.id)) walk(shownChildren(n.id, num), depth + 1);
+    }
+  };
+  walk(shownChildren(null, ''), 0);
+  dirTops = []; let y = 0;
+  dirRows.forEach((r, i) => {
+    dirTops.push(y);
+    y += DIR_ROW_H + (r.depth === 0 && i > 0 ? DIR_GROUP_EXTRA : 0);
+  });
+  dirTotal = y;
+}
+
+function dirRowHTML({ n, num, depth }, i) {
+  const kids = shownChildren(n.id, num);
+  const closed = collapsed.has(n.id);
+  return `
+      <div class="dir-item ${depth ? 'child' : ''} ${depth === 0 && i > 0 ? 'dir-top' : ''} ${n.id === selectedId ? 'selected' : ''}"
            data-id="${n.id}" style="margin-left:${depth * 22}px" onclick="select(${n.id})" ${DND(n.id)} ${DROP(n.id)}>
         ${kids.length
           ? `<button class="toggle" title="${closed ? '펼치기' : '접기'}"
@@ -1282,25 +1425,69 @@ function renderDir(c) {
           : '<span style="display:inline-block;width:11px"></span>'}
         ${GRIP}<span class="num">${num}</span>
         <span style="flex:1${depth ? '' : ';font-weight:600'}">${esc(n.title)}</span>${impSelect(n)}${MV(n.id)}
-      </div>` + (closed ? '' : kids.map(([k, kn]) => item(k, kn, depth + 1)).join(''));
-  };
-  const list = shownChildren(null, '').map(([g, num]) =>
-    `<div class="dir-group">${item(g, num, 0)}</div>`).join('')
-    || `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : ''}</p>`;
+      </div>`;
+}
+
+function paintDirList() {
+  const list = document.querySelector('.dir-list');
+  if (!list) return;
+  const probe = list.querySelector('.dir-item:not(.dir-ghost)');
+  if (probe) DIR_ROW_H = probe.getBoundingClientRect().height || DIR_ROW_H;
+  buildDirRows();
+  const keep = list.scrollTop;
+  dirScrollAt = keep;
+  const winTop = keep - DIR_BUFFER, winBot = keep + list.clientHeight + DIR_BUFFER;
+  let from = dirRows.length, to = 0;
+  for (let i = 0; i < dirRows.length; i++) {
+    if (dirTops[i] + DIR_ROW_H < winTop || dirTops[i] > winBot) continue;
+    if (i < from) from = i;
+    to = i + 1;
+  }
   const addRow = `<div class="dir-item dir-ghost" onclick="addNode(null)" title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</div>`;
+  if (!dirRows.length) {
+    list.innerHTML = `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : ''}</p>` + addRow;
+    return;
+  }
+  const padTop = dirTops[from] || 0;
+  const padBot = Math.max(0, dirTotal - (dirTops[to - 1] + DIR_ROW_H));
+  list.innerHTML = `<div style="height:${padTop}px"></div>`
+    + dirRows.slice(from, to).map((r, k) => dirRowHTML(r, from + k)).join('')
+    + `<div style="height:${padBot}px"></div>` + addRow;
+  list.scrollTop = keep;
+}
+
+function onDirScroll(list) {
+  if (dirTick) return;
+  if (Math.abs(list.scrollTop - dirScrollAt) < DIR_BUFFER / 2) return;
+  dirTick = true;
+  requestAnimationFrame(() => { dirTick = false; if (view === 'dir' && tab === 'spec' && project) paintDirList(); });
+}
+
+function renderDir(c) {
   const sel = nodeById(selectedId);
   const detail = sel ? detailBody(sel, false)
     : '<p style="color:#aaa;margin-top:40px">왼쪽 목록에서 항목을 선택하세요.</p>';
-  c.innerHTML = `<div class="dir"><div class="dir-list" ${DROP(null)} title="빈 곳에 드롭하면 대분류가 됩니다">${list}${addRow}</div><div class="dir-detail">${detail}</div></div>`;
+  c.innerHTML = `<div class="dir"><div class="dir-list" ${DROP(null)} title="빈 곳에 드롭하면 대분류가 됩니다"></div><div class="dir-detail">${detail}</div></div>`;
+  dirDetailStamp = sel ? detailStamp(sel) : 'none';
+  const list = c.querySelector('.dir-list');
+  list.scrollTop = dirScrollAt;
+  list.onscroll = () => onDirScroll(list);
+  paintDirList();
   if (sel) loadComments(sel.id);
 }
 
+let panelStamp = '';
+const detailStamp = n => [n.id, n.title, n.status, n.importance, n.description,
+                          commentCache.has(n.id) ? (commentCache.get(n.id) || []).length : -1].join('|');
 function renderPanel() {
   const p = document.getElementById('panel');
   const n = nodeById(selectedId);
-  if (!n) { p.classList.remove('open'); return; }
+  if (!n) { p.classList.remove('open'); panelStamp = ''; return; }
+  const stamp = detailStamp(n);
+  if (panelStamp === stamp && p.classList.contains('open')) return;   // 바뀐 게 없으면 그대로 둔다
   p.classList.add('open');
   p.innerHTML = detailBody(n, true);
+  panelStamp = stamp;
   loadComments(n.id);
 }
 
@@ -1325,7 +1512,9 @@ function detailBody(n, withClose) {
       ${withClose ? `<button class="btn" onclick="closePanel()">닫기</button>` : ''}
     </div>
     <h3 style="margin:26px 0 6px;font-size:15px">코멘트</h3>
-    <div id="cmts" style="margin-bottom:8px"><p style="color:#aaa;font-size:13px">불러오는 중…</p></div>
+    <div id="cmts" style="margin-bottom:8px">${commentCache.has(n.id)
+      ? commentsHTML(commentCache.get(n.id), n.id)
+      : '<p style="color:#aaa;font-size:13px">불러오는 중…</p>'}</div>
     ${auth ? `<div style="display:flex;gap:6px">
         <input type="text" id="cmt-in" placeholder="코멘트를 입력하세요..."
           style="flex:1;padding:8px;border:1px solid #ddd;border-radius:6px"
@@ -1382,11 +1571,9 @@ async function saveField(id, field, value) {
   render();
 }
 
-async function loadComments(nodeId) {
-  const list = await api(`/api/nodes/${nodeId}/comments`).catch(() => []);
-  const el = document.getElementById('cmts');
-  if (!el || selectedId !== nodeId) return;
-  el.innerHTML = list.length ? list.map(c => `
+const commentCache = new Map();          // 노드별 코멘트. 작성·삭제할 때만 비운다
+function commentsHTML(list, nodeId) {
+  return list.length ? list.map(c => `
     <div style="border-bottom:1px solid #f0f0ec;padding:8px 0">
       <div style="font-size:12px;color:#888">
         <b style="color:#666">${esc(c.username)}</b> · ${new Date(c.created_at).toLocaleString()}
@@ -1397,18 +1584,30 @@ async function loadComments(nodeId) {
     </div>`).join('')
     : '<p style="color:#aaa;font-size:13px">아직 코멘트가 없습니다.</p>';
 }
+async function loadComments(nodeId) {
+  if (commentCache.has(nodeId)) return;   // 이미 화면에 그려져 있다 (detailBody 가 캐시로 렌더)
+  const list = await api(`/api/nodes/${nodeId}/comments`).catch(() => []);
+  commentCache.set(nodeId, list);
+  const el = document.getElementById('cmts');
+  if (!el || selectedId !== nodeId) return;
+  el.innerHTML = commentsHTML(list, nodeId);
+}
 async function addComment(nodeId) {
   const input = document.getElementById('cmt-in');
   if (!input.value.trim()) return;
   try {
     await api(`/api/nodes/${nodeId}/comments`, { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: input.value }) });
-    input.value = ''; loadComments(nodeId);
+    input.value = ''; commentCache.delete(nodeId); await loadComments(nodeId);
+    const el = document.getElementById('cmts');
+    if (el) el.innerHTML = commentsHTML(commentCache.get(nodeId) || [], nodeId);
   } catch (e) { toast(e.detail || '로그인이 필요합니다'); }
 }
 async function deleteComment(id, nodeId) {
   await api('/api/comments/' + id, { method: 'DELETE' }).catch(e => toast(e.detail || '삭제 실패'));
-  loadComments(nodeId);
+  commentCache.delete(nodeId); await loadComments(nodeId);
+  const el = document.getElementById('cmts');
+  if (el) el.innerHTML = commentsHTML(commentCache.get(nodeId) || [], nodeId);
 }
 
 let prdCaret = null;   // 편집 화면에서 커서를 놓을 위치
@@ -1483,10 +1682,14 @@ function applySelection() {
   if (view === 'tree') { renderPanel(); drawLinks(); }   // 패널 폭이 바뀌면 곡선도 다시 그린다
   else renderDirDetail();
 }
+let dirDetailStamp = '';
 function renderDirDetail() {
   const box = document.querySelector('.dir-detail');
   if (!box) return render();
   const sel = nodeById(selectedId);
+  const stamp = sel ? detailStamp(sel) : 'none';
+  if (dirDetailStamp === stamp) return;
+  dirDetailStamp = stamp;
   box.innerHTML = sel ? detailBody(sel, false)
     : '<p style="color:#aaa;margin-top:40px">왼쪽 목록에서 항목을 선택하세요.</p>';
   if (sel) loadComments(sel.id);
