@@ -41,6 +41,27 @@
   .c3 { background: #eef0dc; } .c4 { background: #e9e4f2; } .c5 { background: #f0ecd8; } .c6 { background: #f4e2e0; }
   .cchild { background: #fbfbf9; }
   .badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #eee; color: #666; white-space: nowrap; }
+  .imp1 { background: #f7e0e0; color: #a95a5a; }  /* 필수 Must */
+  .imp2 { background: #f1e6d9; color: #9c7647; }  /* 권장 Should */
+  .imp3 { background: #f2eecf; color: #8d873f; }  /* 선택 Could */
+  .imp4 { background: #ebebe9; color: #8a8a84; }  /* 보류 Won't */
+  #impfilter { position: relative; }
+  .fmenu { position: absolute; top: 100%; left: 0; margin-top: 6px; background: #fff; border: 1px solid #e0e0db;
+    border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.10); padding: 6px; z-index: 30; min-width: 190px; }
+  .fitem { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .fitem:hover { background: #f5f5f2; }
+  .impsel { -webkit-appearance: none; appearance: none; border: none; cursor: pointer; font-family: inherit;
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; text-align: center; }
+  .impsel:hover { filter: brightness(0.96); }
+  .grip { color: #cdcdc7; cursor: grab; font-size: 12px; letter-spacing: -1px; }
+  /* 드래그 중 놓일 위치 미리보기 */
+  .drop-before { box-shadow: 0 -3px 0 0 #6b7fd7 !important; }
+  .drop-after { box-shadow: 0 3px 0 0 #6b7fd7 !important; }
+  #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 100;
+    display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+  #toast div { background: #333; color: #fff; padding: 9px 16px; border-radius: 8px; font-size: 13px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: pre-line; }
+  .node-card:hover .grip, .dir-item:hover .grip { color: #8f8f89; }
   /* ---- directory view ---- */
   .dir { display: flex; gap: 0; height: 100%; }
   .dir-list { width: 340px; border-right: 1px solid #e5e5e0; overflow: auto; padding-right: 16px; }
@@ -54,14 +75,22 @@
   .dir-group { border-bottom: 1px solid #eee; padding: 6px 0; }
   .dir-detail { flex: 1; overflow: auto; padding: 8px 32px; }
   /* ---- detail panel ---- */
-  #panel { width: 420px; background: #fff; border-left: 1px solid #e5e5e0; padding: 24px; overflow: auto; display: none; }
+  #panel { width: 460px; background: #fff; border-left: 1px solid #e5e5e0; padding: 24px 28px; overflow: auto; display: none; }
   #panel.open { display: block; }
-  #panel h2 { margin: 8px 0 16px; }
-  #panel label { display: block; font-size: 12px; color: #888; margin: 14px 0 4px; }
-  #panel input[type=text], #panel select, #panel textarea {
-    width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; font-family: inherit;
-  }
-  #panel textarea { min-height: 180px; resize: vertical; }
+  /* readable detail view; every field edits in place on click */
+  .dir-detail .detail { max-width: 820px; }
+  .detail h1 { font-size: 22px; margin: 4px -7px 12px; padding: 3px 7px; border-radius: 7px; cursor: text; }
+  .detail h1:hover, .desc-md:hover { background: #f2f2ef; }
+  .detail .sep { border: none; border-top: 1px solid #eee; margin: 16px 0; }
+  .desc-md { cursor: text; padding: 10px; margin: -10px; border-radius: 8px; min-height: 70px; line-height: 1.75; }
+  .desc-md .ph { color: #bbb; }
+  .pill-select { border: 1px solid #e2e2dd; background: #f7f7f5; border-radius: 20px;
+    padding: 3px 10px; font-size: 12px; color: #555; font-family: inherit; cursor: pointer; }
+  .inline-edit { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid #6b7fd7;
+    border-radius: 7px; outline: none; background: #fff; }
+  .inline-edit.title-edit { font-size: 22px; font-weight: 700; }
+  textarea.inline-edit { min-height: 240px; line-height: 1.75; resize: vertical; }
+  .hint { font-size: 12px; color: #aaa; margin-top: 6px; }
   .btnrow { display: flex; gap: 8px; margin-top: 18px; }
   .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 14px; }
   .btn.primary { background: #333; color: #fff; border-color: #333; }
@@ -92,16 +121,36 @@
     <button id="view-dir" onclick="setView('dir')">디렉토리 뷰</button>
   </div>
   <button class="btn" id="add-root" onclick="addNode(null)">+ 대분류 추가</button>
+  <div id="impfilter" style="display:flex;gap:4px;align-items:center"></div>
   <div id="authbox" style="margin-left:auto;display:flex;gap:6px;align-items:center"></div>
 </header>
+<div id="toast"></div>
 <main>
   <div id="content"></div>
   <aside id="panel"></aside>
 </main>
 <script>
 const STATUSES = ['기획 작성중', '기획 완료', '개발 중', '완료'];
+const MAX_DEPTH = 4;  // 대분류 > 중분류 > 소분류 > 세부
 let tab = 'spec', view = 'tree', nodes = [], selectedId = null, collapsed = new Set(), prdContent = '', prdEditing = false;
 let project = null, projects = [];
+function toast(msg) {
+  const box = document.getElementById('toast');
+  const el = document.createElement('div');
+  el.textContent = msg;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+let pending = null;  // 확인이 필요한 동작: 같은 버튼을 한 번 더 눌러야 실행
+function twoStep(key, fn) {
+  if (pending !== key) {
+    pending = key; render();
+    setTimeout(() => { if (pending === key) { pending = null; render(); } }, 5000);
+    return;
+  }
+  pending = null; fn();
+}
+const askLabel = (key, normal) => pending === key ? '한 번 더 클릭' : normal;
 const shareToken = new URLSearchParams(location.search).get('share');
 
 let auth = null;
@@ -137,13 +186,13 @@ async function doLogin() {
   try {
     setAuth(await api('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
-  } catch (e) { alert(e.detail || '로그인 실패'); }
+  } catch (e) { toast(e.detail || '로그인 실패'); }
 }
 async function doRegister() {
   try {
     setAuth(await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
-  } catch (e) { alert(e.detail || '회원가입 실패'); }
+  } catch (e) { toast(e.detail || '회원가입 실패'); }
 }
 async function doLogout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
@@ -171,26 +220,117 @@ function md(text) {
   if (ul) out.push('</ul>');
   return out.join('');
 }
-const impBadge = n => '●'.repeat(n) + '○'.repeat(3 - n);
+const MOSCOW = [
+  { v: 1, ko: '필수', en: 'Must' },
+  { v: 2, ko: '권장', en: 'Should' },
+  { v: 3, ko: '선택', en: 'Could' },
+  { v: 4, ko: '보류', en: "Won't" },
+];
+const moscow = v => MOSCOW.find(m => m.v === v) || MOSCOW[1];
+let impFilter = new Set(MOSCOW.map(m => m.v));   // 중요도 다중 선택 필터
+const filterOn = () => impFilter.size < MOSCOW.length;
+function matchesFilter(n) {
+  if (!filterOn()) return true;
+  return impFilter.has(n.importance) || childrenOf(n.id).some(matchesFilter);
+}
+// 번호는 필터와 무관하게 유지되도록 원본 순서로 매긴 뒤 걸러낸다
+// 카드에서 바로 고르는 중요도 드롭다운
+const impSelect = n => `<select class="impsel imp${n.importance}" title="중요도" draggable="false"
+      onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"
+      onchange="event.stopPropagation();saveField(${n.id},'importance',+this.value)">${
+      MOSCOW.map(m => `<option value="${m.v}" ${m.v === n.importance ? 'selected' : ''}>${m.ko}</option>`).join('')}</select>`;
+const shownChildren = (pid, prefix) => childrenOf(pid)
+  .map((k, i) => [k, prefix ? prefix + '.' + (i + 1) : String(i + 1)])
+  .filter(([k]) => matchesFilter(k));
+let filterOpen = false;
+function toggleFilterMenu() { filterOpen = !filterOpen; render(); }
+function toggleImp(v) {
+  impFilter.has(v) ? impFilter.delete(v) : impFilter.add(v);
+  render();
+}
+function setAllImp(on) { impFilter = new Set(on ? MOSCOW.map(m => m.v) : []); render(); }
+// 바깥을 클릭하면 메뉴를 닫는다
+document.addEventListener('click', e => {
+  if (!filterOpen) return;
+  // 다시 그리면서 교체된 요소의 클릭은 '바깥 클릭'이 아니다
+  if (!e.target.isConnected) return;
+  if (!e.target.closest('#impfilter')) { filterOpen = false; render(); }
+});
+const impBadge = v => moscow(v).ko;
+// 0-based depth: 대분류 = 0
+function depthOf(n) { let d = 0; while (n && n.parent_id != null) { n = nodes.find(x => x.id === n.parent_id); d++; } return d; }
+const canAddChild = n => depthOf(n) < MAX_DEPTH - 1;
 
 // ---------- drag & drop (reparent) ----------
 let dragId = null;
-const DND = id => `draggable="true" ondragstart="dragStart(event,${id})"`;
-const DROP = pid => `ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropOn(event,${pid})"`;
-function dragStart(e, id) { dragId = id; e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }
-function dragOver(e) { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add('dragover'); }
-function dragLeave(e) { e.currentTarget.classList.remove('dragover'); }
+const DND = id => `draggable="true" ondragstart="dragStart(event,${id})" ondragend="dragEnd()"`;
+const GRIP = '<span class="grip" title="드래그하여 다른 항목 위로 옮기기">⠿</span>';
+const DROP = pid => `ondragover="dragOver(event,${pid})" ondragleave="dragLeave(event)" ondrop="dropOn(event,${pid})"`;
+function dragStart(e, id) {
+  dragId = id;
+  e.dataTransfer.effectAllowed = 'move';
+  // setData 가 없으면 Firefox 등에서는 드래그 자체가 시작되지 않는다
+  try { e.dataTransfer.setData('text/plain', String(id)); } catch (_) {}
+  e.stopPropagation();
+}
+function dragEnd() { dragId = null; clearDropHints(); }
+const clearDropHints = el =>
+  (el ? [el] : [...document.querySelectorAll('.dragover,.drop-before,.drop-after')])
+    .forEach(x => x.classList.remove('dragover', 'drop-before', 'drop-after'));
+
+// 위쪽 30% = 앞에, 아래쪽 30% = 뒤에, 가운데 = 하위로
+function dropZone(e, targetId) {
+  const el = e.currentTarget;
+  if (targetId == null || el.classList.contains('mm-root') || el.classList.contains('dir-list')) return 'into';
+  const r = el.getBoundingClientRect();
+  const p = (e.clientY - r.top) / r.height;
+  return p < 0.3 ? 'before' : p > 0.7 ? 'after' : 'into';
+}
+function dragOver(e, targetId) {
+  e.preventDefault(); e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  const el = e.currentTarget;
+  clearDropHints(el);
+  const z = dropZone(e, targetId);
+  el.classList.add(z === 'into' ? 'dragover' : z === 'before' ? 'drop-before' : 'drop-after');
+}
+function dragLeave(e) { clearDropHints(e.currentTarget); }
+const put = (id, body) => api('/api/nodes/' + id, { method: 'PUT',
+  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const subtreeHeight = n => 1 + Math.max(0, ...childrenOf(n.id).map(subtreeHeight));
+const isAncestor = (ancId, n) => {
+  for (let cur = n; cur; cur = nodes.find(x => x.id === cur.parent_id)) if (cur.id === ancId) return true;
+  return false;
+};
+
+// 가운데에 놓으면 하위로, 위/아래에 놓으면 그 형제 자리로 끼워 넣는다
 async function dropOn(e, targetId) {
-  // drop ON a box → move INSIDE it (reparent); reorder is done with the ▲▼ buttons
-  e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('dragover');
+  e.preventDefault(); e.stopPropagation();
+  const zone = dropZone(e, targetId);
+  clearDropHints();
   const id = dragId; dragId = null;
   if (id == null || id === targetId) return;
   const node = nodes.find(x => x.id === id);
-  if (node.parent_id === targetId) return;
-  for (let cur = nodes.find(x => x.id === targetId); cur; cur = nodes.find(x => x.id === cur.parent_id))
-    if (cur.id === id) { alert('자기 하위 항목으로는 이동할 수 없습니다.'); return; }
-  await api('/api/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parent_id: targetId }) });
+  const target = nodes.find(x => x.id === targetId);
+  const newParent = zone === 'into' ? targetId : (target ? target.parent_id : null);
+
+  if (newParent != null && isAncestor(id, nodes.find(x => x.id === newParent)))
+    return toast('자기 하위 항목으로는 이동할 수 없습니다.');
+  const parentDepth = newParent == null ? -1 : depthOf(nodes.find(x => x.id === newParent));
+  if (parentDepth + 1 + subtreeHeight(node) > MAX_DEPTH)
+    return toast(`${MAX_DEPTH}단계까지만 만들 수 있습니다.`);
+
+  if (zone === 'into') {
+    if (node.parent_id === targetId) return;
+    await put(id, { parent_id: targetId });
+  } else {
+    if (node.parent_id !== newParent) await put(id, { parent_id: newParent });
+    nodes = await reloadNodes();
+    const sibs = childrenOf(newParent).filter(x => x.id !== id);
+    const at = sibs.findIndex(x => x.id === targetId) + (zone === 'after' ? 1 : 0);
+    sibs.splice(at, 0, nodes.find(x => x.id === id));
+    await Promise.all(sibs.map((x, i) => x.sort_order === i ? null : put(x.id, { sort_order: i })));
+  }
   nodes = await reloadNodes(); render();
 }
 
@@ -211,20 +351,37 @@ const MV = id => `<button class="mv" title="위로" onclick="event.stopPropagati
 // ---------- rendering ----------
 function render() {
   const c = document.getElementById('content');
+  c.onclick = null;
   const has = !!project;
   document.getElementById('proj-name').textContent = has ? project.name : '';
   document.getElementById('btn-projects').style.display = auth && !shareToken ? '' : 'none';
   document.getElementById('tabs').style.display = has ? '' : 'none';
   document.getElementById('viewtoggle').style.display = has && tab === 'spec' ? '' : 'none';
   document.getElementById('add-root').style.display = has && tab === 'spec' ? '' : 'none';
+  const fEl = document.getElementById('impfilter');
+  fEl.style.display = has && tab === 'spec' ? 'flex' : 'none';
+  const label = !filterOn() ? '전체' : (MOSCOW.filter(m => impFilter.has(m.v)).map(m => m.ko).join(', ') || '없음');
+  fEl.innerHTML = `<button class="btn" onclick="event.stopPropagation();toggleFilterMenu()">중요도: ${label} ▾</button>
+    ${filterOpen ? `<div class="fmenu">
+      ${MOSCOW.map(m => `<label class="fitem">
+        <input type="checkbox" ${impFilter.has(m.v) ? 'checked' : ''} onchange="toggleImp(${m.v})">
+        <span class="badge imp${m.v}">${m.ko}</span><span style="color:#aaa;font-size:11px">${m.en}</span></label>`).join('')}
+      <div class="fitem" style="border-top:1px solid #eee;margin-top:4px;padding-top:8px;gap:6px">
+        <button class="btn" style="padding:3px 9px;font-size:12px" onclick="setAllImp(true)">전체 선택</button>
+        <button class="btn" style="padding:3px 9px;font-size:12px" onclick="setAllImp(false)">전체 해제</button>
+      </div></div>` : ''}`;
   if (!has) { renderProjects(c); document.getElementById('panel').classList.remove('open'); return; }
   document.getElementById('tab-spec').classList.toggle('active', tab === 'spec');
   document.getElementById('tab-prd').classList.toggle('active', tab === 'prd');
   document.getElementById('view-tree').classList.toggle('active', view === 'tree');
   document.getElementById('view-dir').classList.toggle('active', view === 'dir');
   if (tab === 'prd') { renderPrd(c); document.getElementById('panel').classList.remove('open'); return; }
-  if (view === 'tree') renderTree(c); else renderDir(c);
-  renderPanel();
+  if (view === 'tree') {
+    renderTree(c); renderPanel();
+    // 빈 배경을 클릭하면 사이드 패널을 닫는다
+    c.onclick = e => { if (selectedId != null && !e.target.closest('.node-card')) closePanel(); };
+  }
+  else { renderDir(c); document.getElementById('panel').classList.remove('open'); }
 }
 
 // ---------- projects ----------
@@ -242,14 +399,14 @@ function renderProjects(c) {
     </div>
     ${projects.map(p => `
       <div style="display:flex;gap:8px;align-items:center;background:#fff;border:1px solid #e5e5e0;border-radius:10px;padding:14px 18px;margin-bottom:10px">
-        <a href="#" style="flex:1;font-weight:600;font-size:15px;color:#333;text-decoration:none"
+        <a href="#" data-pname="${p.id}" style="flex:1;font-weight:600;font-size:15px;color:#333;text-decoration:none"
            onclick="openProject(${p.id});return false">${esc(p.name)}</a>
         ${p.share_token
           ? `<button class="btn" onclick="copyShare('${p.share_token}')">링크 복사</button>
-             <button class="btn danger" onclick="dropShare(${p.id})">링크 해제</button>`
+             <button class="btn danger" onclick="twoStep('share:${p.id}', () => dropShare(${p.id}))">${askLabel('share:' + p.id, '링크 해제')}</button>`
           : `<button class="btn" onclick="makeShare(${p.id})">공유 링크 생성</button>`}
         <button class="btn" onclick="renameProject(${p.id})">이름 변경</button>
-        <button class="btn danger" onclick="deleteProject(${p.id})">삭제</button>
+        <button class="btn danger" onclick="twoStep('proj:${p.id}', () => deleteProject(${p.id}))">${askLabel('proj:' + p.id, '삭제')}</button>
       </div>`).join('') || '<p style="color:#aaa">프로젝트가 없습니다. 새 프로젝트를 만드세요.</p>'}
   </div>`;
 }
@@ -269,22 +426,40 @@ function goProjects() {
   loadProjects().then(render);
 }
 async function createProject() {
-  const name = prompt('프로젝트 이름', '');
-  if (!name) return;
-  await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }) });
+  const np = await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '새 프로젝트' }) });
   await loadProjects(); render();
+  renameProject(np.id);
 }
-async function renameProject(id) {
+// 프로젝트 이름을 그 자리에서 편집
+function renameProject(id) {
+  const el = document.querySelector(`[data-pname="${id}"]`);
   const cur = projects.find(p => p.id === id);
-  const name = prompt('새 이름', cur.name);
-  if (!name || name === cur.name) return;
-  await api('/api/projects/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }) });
-  await loadProjects(); render();
+  if (!el || !cur) return;
+  const box = document.createElement('input');
+  box.className = 'inline-edit';
+  box.value = cur.name;
+  el.replaceWith(box);
+  box.focus(); box.select();
+  let done = false;
+  const finish = async save => {
+    if (done) return;
+    done = true;
+    const name = box.value.trim();
+    if (save && name && name !== cur.name) {
+      await api('/api/projects/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }) });
+      await loadProjects();
+    }
+    render();
+  };
+  box.addEventListener('blur', () => finish(true));
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Escape') finish(false);
+    else if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+  });
 }
 async function deleteProject(id) {
-  if (!confirm('프로젝트와 모든 기능/코멘트가 삭제됩니다. 계속할까요?')) return;
   await api('/api/projects/' + id, { method: 'DELETE' });
   await loadProjects(); render();
 }
@@ -293,40 +468,40 @@ async function makeShare(id) {
   await loadProjects(); render(); copyShare(r.share_token);
 }
 async function dropShare(id) {
-  if (!confirm('공유 링크를 해제하면 기존 링크로 접속할 수 없습니다.')) return;
   await api(`/api/projects/${id}/share`, { method: 'DELETE' });
   await loadProjects(); render();
 }
 function copyShare(token) {
   const url = location.origin + '/?share=' + token;
   (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
-    .then(() => alert('공유 링크가 복사되었습니다:\n' + url))
+    .then(() => toast('공유 링크가 복사되었습니다:\n' + url))
     .catch(() => prompt('공유 링크:', url));
 }
 
 function renderTree(c) {
   const branch = (n, num, depth, rootIdx) => {
-    const kids = childrenOf(n.id);
+    const kids = shownChildren(n.id, num);
     const closed = collapsed.has(n.id);
     const color = depth === 0 ? 'c' + (rootIdx % 7) : 'cchild';
     return `<div class="mm-branch">
       <span class="node-card ${color} ${n.id === selectedId ? 'selected' : ''}" data-id="${n.id}" onclick="select(${n.id})" ${DND(n.id)} ${DROP(n.id)}>
-        <span>${esc(n.title)}</span><span class="num">${num}</span>
-        <span class="badge">${esc(n.status)}</span>
-        <button class="addchild" title="하위 추가" onclick="event.stopPropagation();addNode(${n.id})">＋</button>
+        ${GRIP}<span>${esc(n.title)}</span><span class="num">${num}</span>
+        ${impSelect(n)}
+        ${depth < MAX_DEPTH - 1 ? `<button class="addchild" title="하위 추가" onclick="event.stopPropagation();addNode(${n.id})">＋</button>` : ''}
         ${MV(n.id)}
         ${kids.length ? `<button class="toggle" onclick="event.stopPropagation();toggleCollapse(${n.id})">${closed ? '▶' : '◀'}</button>` : ''}
       </span>
-      ${kids.length && !closed ? `<div class="mm-children">${kids.map((k, i) =>
-        `<div class="mm-child">${branch(k, num + '.' + (i + 1), depth + 1, rootIdx)}</div>`).join('')}</div>` : ''}
+      ${kids.length && !closed ? `<div class="mm-children">${kids.map(([k, kn]) =>
+        `<div class="mm-child">${branch(k, kn, depth + 1, rootIdx)}</div>`).join('')}</div>` : ''}
     </div>`;
   };
-  const roots = childrenOf(null);
+  const roots = shownChildren(null, '');
+  const empty = filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : '항목이 없습니다. 대분류를 추가하세요.';
   c.innerHTML = `<div class="tree"><svg class="links"></svg><div class="mm-branch">
     <span class="node-card mm-root" data-id="root" ${DROP(null)} title="여기에 드롭하면 대분류가 됩니다">PRD</span>
-    <div class="mm-children">${roots.map((n, i) =>
-      `<div class="mm-child">${branch(n, String(i + 1), 0, i)}</div>`).join('') ||
-      '<div class="mm-child"><span style="color:#aaa">항목이 없습니다. 대분류를 추가하세요.</span></div>'}</div>
+    <div class="mm-children">${roots.map(([n, num], i) =>
+      `<div class="mm-child">${branch(n, num, 0, i)}</div>`).join('') ||
+      `<div class="mm-child"><span style="color:#aaa">${empty}</span></div>`}</div>
   </div></div>`;
   drawLinks();
 }
@@ -361,25 +536,21 @@ function drawLinks() {
 window.addEventListener('resize', drawLinks);
 
 function renderDir(c) {
-  const list = childrenOf(null).map((g, i) => {
-    const kids = childrenOf(g.id).map((k, j) => `
-      <div class="dir-item child ${k.id === selectedId ? 'selected' : ''}" onclick="select(${k.id})" ${DND(k.id)} ${DROP(k.id)}>
-        <span class="num">${j + 1}</span><span style="flex:1">${esc(k.title)}</span>${MV(k.id)}
-      </div>`).join('');
-    return `<div class="dir-group">
-      <div class="dir-item ${g.id === selectedId ? 'selected' : ''}" onclick="select(${g.id})" ${DND(g.id)} ${DROP(g.id)}>
-        <span class="num">${i + 1}</span><b style="flex:1">${esc(g.title)}</b>${MV(g.id)}
-      </div>${kids}</div>`;
-  }).join('');
+  // render every depth, not just two levels
+  const item = (n, num, depth) => `
+      <div class="dir-item ${depth ? 'child' : ''} ${n.id === selectedId ? 'selected' : ''}"
+           style="margin-left:${depth * 22}px" onclick="select(${n.id})" ${DND(n.id)} ${DROP(n.id)}>
+        ${GRIP}<span class="num">${num}</span>
+        <span style="flex:1${depth ? '' : ';font-weight:600'}">${esc(n.title)}</span>${impSelect(n)}${MV(n.id)}
+      </div>` + shownChildren(n.id, num).map(([k, kn]) => item(k, kn, depth + 1)).join('');
+  const list = shownChildren(null, '').map(([g, num]) =>
+    `<div class="dir-group">${item(g, num, 0)}</div>`).join('')
+    || `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : '항목이 없습니다.'}</p>`;
   const sel = nodes.find(n => n.id === selectedId);
-  const detail = sel ? `
-    <h1 style="margin:12px 0 14px">${esc(sel.title)}</h1>
-    <div class="meta"><span>ID N-${String(sel.id).padStart(4, '0')}</span>
-      <span class="badge">● ${esc(sel.status)}</span><span>중요도 ${impBadge(sel.importance)}</span></div>
-    <hr style="border:none;border-top:1px solid #eee;margin:18px 0">
-    <div class="desc-md">${md(sel.description) || '<p style="color:#aaa">설명이 없습니다. 우측 패널에서 편집하세요.</p>'}</div>`
+  const detail = sel ? detailBody(sel, false)
     : '<p style="color:#aaa;margin-top:40px">왼쪽 목록에서 항목을 선택하세요.</p>';
   c.innerHTML = `<div class="dir"><div class="dir-list" ${DROP(null)} title="빈 곳에 드롭하면 대분류가 됩니다">${list}</div><div class="dir-detail">${detail}</div></div>`;
+  if (sel) loadComments(sel.id);
 }
 
 function renderPanel() {
@@ -387,20 +558,29 @@ function renderPanel() {
   const n = nodes.find(x => x.id === selectedId);
   if (!n) { p.classList.remove('open'); return; }
   p.classList.add('open');
-  p.innerHTML = `
-    <div class="meta"><span>ID N-${String(n.id).padStart(4, '0')}</span></div>
-    <label>제목</label><input type="text" id="f-title" value="${esc(n.title)}">
-    <label>상태</label>
-    <select id="f-status">${STATUSES.map(s => `<option ${s === n.status ? 'selected' : ''}>${s}</option>`).join('')}</select>
-    <label>중요도</label>
-    <select id="f-importance">${[1, 2, 3].map(v => `<option value="${v}" ${v === n.importance ? 'selected' : ''}>${impBadge(v)} (${v})</option>`).join('')}</select>
-    <label>설명 (마크다운: #제목, - 불릿)</label>
-    <textarea id="f-desc">${esc(n.description)}</textarea>
+  p.innerHTML = detailBody(n, true);
+  loadComments(n.id);
+}
+
+// rendered detail shared by the tree side panel and the directory pane
+function detailBody(n, withClose) {
+  return `<div class="detail">
+    <h1 title="클릭하여 수정" onclick="editField(this,${n.id},'title')">${esc(n.title)}</h1>
+    <div class="meta">
+      <span>ID N-${String(n.id).padStart(4, '0')}</span>
+      <select class="pill-select" onchange="saveField(${n.id},'status',this.value)">
+        ${STATUSES.map(s => `<option ${s === n.status ? 'selected' : ''}>${s}</option>`).join('')}</select>
+      <select class="pill-select" onchange="saveField(${n.id},'importance',+this.value)">
+        ${MOSCOW.map(m => `<option value="${m.v}" ${m.v === n.importance ? 'selected' : ''}>${m.ko} (${m.en})</option>`).join('')}</select>
+    </div>
+    <hr class="sep">
+    <div class="desc-md" title="클릭하여 수정" onclick="editField(this,${n.id},'description')">
+      ${md(n.description) || '<p class="ph">설명이 없습니다. 클릭하여 작성하세요.</p>'}</div>
     <div class="btnrow">
-      <button class="btn primary" onclick="saveNode(${n.id})">저장</button>
-      <button class="btn" onclick="addNode(${n.id})">+ 하위 추가</button>
-      <button class="btn danger" onclick="removeNode(${n.id})">삭제</button>
-      <button class="btn" onclick="closePanel()">닫기</button>
+      ${canAddChild(n) ? `<button class="btn" onclick="addNode(${n.id})">+ 하위 추가</button>` : ''}
+      <button class="btn danger" title="하위 항목까지 삭제됩니다"
+        onclick="twoStep('node:${n.id}', () => removeNode(${n.id}))">${askLabel('node:' + n.id, '삭제')}</button>
+      ${withClose ? `<button class="btn" onclick="closePanel()">닫기</button>` : ''}
     </div>
     <h3 style="margin:26px 0 6px;font-size:15px">코멘트</h3>
     <div id="cmts" style="margin-bottom:8px"><p style="color:#aaa;font-size:13px">불러오는 중…</p></div>
@@ -410,8 +590,45 @@ function renderPanel() {
           onkeydown="if(event.key==='Enter')addComment(${n.id})">
         <button class="btn primary" onclick="addComment(${n.id})">등록</button>
       </div>`
-      : '<p style="color:#aaa;font-size:13px">코멘트를 작성하려면 로그인하세요.</p>'}`;
-  loadComments(n.id);
+      : '<p style="color:#aaa;font-size:13px">코멘트를 작성하려면 로그인하세요.</p>'}
+  </div>`;
+}
+
+// swap the rendered field for an editor in place; blur/Ctrl+Enter saves, Esc cancels
+function editField(el, id, field) {
+  const n = nodes.find(x => x.id === id);
+  const multiline = field === 'description';
+  const box = document.createElement(multiline ? 'textarea' : 'input');
+  box.className = 'inline-edit' + (field === 'title' ? ' title-edit' : '');
+  box.value = n[field];
+  el.replaceWith(box);
+  if (multiline) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = '마크다운: # 제목, - 불릿 · 바깥을 클릭하거나 Ctrl+Enter로 저장, Esc로 취소';
+    box.after(hint);
+  }
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+  let done = false;
+  // rerender=false: 다른 렌더링이 편집기를 걷어내며 발생한 blur (여기서 다시 그리면 DOM이 깨진다)
+  const finish = (save, rerender = true) => {
+    if (done) return;
+    done = true;
+    if (save && box.value !== n[field]) saveField(id, field, box.value);
+    else if (rerender) render();
+  };
+  box.addEventListener('blur', () => finish(true, box.isConnected));
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Escape') finish(false);
+    else if (e.key === 'Enter' && (!multiline || e.ctrlKey || e.metaKey)) { e.preventDefault(); finish(true); }
+  });
+}
+
+async function saveField(id, field, value) {
+  await api('/api/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ [field]: value }) });
+  nodes = await reloadNodes(); render();
 }
 
 async function loadComments(nodeId) {
@@ -436,10 +653,10 @@ async function addComment(nodeId) {
     await api(`/api/nodes/${nodeId}/comments`, { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: input.value }) });
     input.value = ''; loadComments(nodeId);
-  } catch (e) { alert(e.detail || '로그인이 필요합니다'); }
+  } catch (e) { toast(e.detail || '로그인이 필요합니다'); }
 }
 async function deleteComment(id, nodeId) {
-  await api('/api/comments/' + id, { method: 'DELETE' }).catch(e => alert(e.detail || '삭제 실패'));
+  await api('/api/comments/' + id, { method: 'DELETE' }).catch(e => toast(e.detail || '삭제 실패'));
   loadComments(nodeId);
 }
 
@@ -472,25 +689,15 @@ async function boot() {
 }
 const reloadNodes = () => api(`/api/projects/${project.id}/nodes`);
 async function addNode(parentId) {
-  const title = prompt(parentId ? '하위 기능 이름' : '대분류 이름', '');
-  if (!title) return;
   const n = await api(`/api/projects/${project.id}/nodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parent_id: parentId, title }) });
+    body: JSON.stringify({ parent_id: parentId, title: parentId ? '새 하위 기능' : '새 대분류' }) });
   nodes = await reloadNodes();
   selectedId = n.id; collapsed.delete(parentId); render();
-}
-async function saveNode(id) {
-  await api('/api/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: document.getElementById('f-title').value,
-      status: document.getElementById('f-status').value,
-      importance: +document.getElementById('f-importance').value,
-      description: document.getElementById('f-desc').value,
-    }) });
-  nodes = await reloadNodes(); render();
+  // 생성 직후 제목을 바로 고칠 수 있게 편집 상태로 연다
+  const h1 = document.querySelector((view === 'tree' ? '#panel' : '.dir-detail') + ' .detail h1');
+  if (h1) { editField(h1, n.id, 'title'); document.querySelector('.inline-edit.title-edit')?.select(); }
 }
 async function removeNode(id) {
-  if (!confirm('이 항목과 모든 하위 항목이 삭제됩니다. 계속할까요?')) return;
   await api('/api/nodes/' + id, { method: 'DELETE' });
   if (selectedId === id) selectedId = null;
   nodes = await reloadNodes(); render();
