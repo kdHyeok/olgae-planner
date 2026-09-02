@@ -14,7 +14,8 @@ PRD & 기능명세서 관리 서비스. Docker Compose 로 `frontend`(nginx + `i
    컬럼 삭제·타입 변경은 이 방식으로 안 되니 조건부로 쓰고 이유를 문서에 남긴다.
 3. **바꾼 뒤 같은 작업 안에서 [`doc/ERD.md`](doc/ERD.md) 를 갱신한다.**
    관계도 · 삭제 규칙 · 테이블 상세 표 · 문자열 참조 · 인덱스. 새 컬럼에는 한글 이름을 붙이고,
-   행(데이터) 값은 적지 않는다. API 필드가 바뀌면 `README.md` 의 API 표도 함께.
+   행(데이터) 값은 적지 않는다. API 필드가 바뀌면 `README.md` 의 API 표와
+   `backend/mcp_app.py`(핸들러를 재사용하는 /mcp MCP 서버)도 함께 확인한다.
 4. 실제 DB 와 문서가 맞는지 확인한다:
    `docker compose exec -T db psql -U app -d app -c "\dt" -c "\d+ <테이블>"`
 

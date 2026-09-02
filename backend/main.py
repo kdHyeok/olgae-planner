@@ -4,17 +4,28 @@ import os
 import re
 import secrets
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 pool = ConnectionPool(os.environ["DATABASE_URL"])
-app = FastAPI()
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    init_db()
+    # /mcp 는 streamable HTTP 라 세션 매니저의 태스크 그룹이 떠 있어야 한다
+    async with mcp_app.server.session_manager.run():
+        yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 PRD_TEMPLATE = "# PRD\n\n## 개요\n\n내용을 작성하세요.\n"
 
 
-@app.on_event("startup")
 def init_db():
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("""
@@ -692,3 +703,10 @@ def delete_comment(comment_id: int, user: dict = Depends(current_user)):
                     (comment_id, user["id"]))
         if cur.rowcount == 0:
             raise HTTPException(404, "본인 코멘트만 삭제할 수 있습니다")
+
+
+# ---------- MCP (/mcp) ----------
+# 위 핸들러들을 재사용하므로 정의가 끝난 이 자리에서 import 한다.
+import mcp_app  # noqa: E402
+
+app.mount("/mcp", mcp_app.asgi_app())
