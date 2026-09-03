@@ -188,13 +188,16 @@
   .prd-doc { max-width: 820px; margin: 0 auto; background: #fff; border: 1px solid #e5e5e0; border-radius: 10px; padding: 40px 48px; line-height: 1.7; }
   .prd-doc h1 { font-size: 26px; margin: 0 0 20px; } .prd-doc h2 { font-size: 20px; margin: 28px 0 10px; }
   .prd-doc h3 { font-size: 16px; margin: 20px 0 6px; } .prd-doc p { margin: 8px 0; }
+  .prd-doc h4 { font-size: 14px; margin: 16px 0 4px; } .prd-doc h5 { font-size: 13px; margin: 14px 0 4px; }
+  .prd-doc h6 { font-size: 13px; margin: 14px 0 4px; color: #777; }
   .prd-doc ul { padding-left: 22px; margin: 8px 0; }
   .prd-doc { cursor: text; }
   .prd-doc:hover { border-color: #d8d8d2; }
   #prd-edit { width: 100%; max-width: 820px; display: block; margin: 0 auto 12px; min-height: 65vh; padding: 20px;
     border: 1px solid #ddd; border-radius: 10px; font-size: 14px; font-family: Consolas, monospace; line-height: 1.6; }
   .toolbar { max-width: 820px; margin: 0 auto 14px; display: flex; justify-content: flex-end; gap: 8px; }
-  .desc-md h3 { margin: 14px 0 6px; } .desc-md ul { padding-left: 20px; } .desc-md p { margin: 6px 0; }
+  .desc-md h3, .desc-md h4, .desc-md h5, .desc-md h6 { margin: 14px 0 6px; }
+  .desc-md h4 { font-size: 14px; } .desc-md h5, .desc-md h6 { font-size: 13px; } .desc-md h6 { color: #777; } .desc-md ul { padding-left: 20px; } .desc-md p { margin: 6px 0; }
 </style>
 </head>
 <body>
@@ -475,7 +478,7 @@ function md(text) {
       continue;
     }
     closeUl();
-    const h = t.match(/^(#{1,3})\s+(.*)/);
+    const h = t.match(/^(#{1,6})\s+(.*)/);
     if (h) out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
     else out.push('<p>' + inline(t) + '</p>');
   }
@@ -1679,7 +1682,7 @@ function renderPrd(c) {
 function prdClickEdit(e) {
   if (e.target.closest('a')) return;              // 링크는 브라우저가 열도록
   if (e.target.closest('.term')) return;          // 용어 클릭은 용어 사전
-  const block = e.target.closest('p,h1,h2,h3,li');
+  const block = e.target.closest('p,h1,h2,h3,h4,h5,h6,li');
   let offset = 0;
   if (block) {
     // 클릭 지점까지의 글자 수 (블록 기준)
