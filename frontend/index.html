@@ -79,6 +79,18 @@
     border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.10); padding: 6px; z-index: 30; min-width: 190px; }
   .fitem { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
   .fitem:hover { background: #f5f5f2; }
+  /* 내 계정 팝오버 */
+  #authbox { position: relative; }
+  .avatar-btn { padding: 0 !important; width: 30px; height: 30px;
+    border-radius: 50% !important; overflow: hidden; }
+  .avatar-pick, .cmt-av { border-radius: 50%; overflow: hidden; flex: none; color: #c4c4be;
+    display: flex; align-items: center; justify-content: center; border: 1px solid #e8e8e4; }
+  .avatar-pick { cursor: pointer; border-color: #e0e0db; }
+  .avatar-pick:hover { filter: brightness(0.94); }
+  .cmt-av { width: 26px; height: 26px; margin-top: 1px; }
+  .gauge { height: 6px; border-radius: 3px; background: #eee; overflow: hidden; margin-top: 3px; }
+  .gauge > i { display: block; height: 100%; background: #6b7fd7; }
+  .gauge.warn > i { background: #c0392b; }
   .impsel { -webkit-appearance: none; appearance: none; border: none; cursor: pointer; font-family: inherit;
     font-size: 11px; padding: 2px 8px; border-radius: 10px; text-align: center; }
   .impsel:hover { filter: brightness(0.96); }
@@ -86,7 +98,8 @@
   /* 드래그 중 놓일 위치 미리보기 */
   .drop-before { box-shadow: 0 -3px 0 0 #6b7fd7 !important; }
   .drop-after { box-shadow: 0 3px 0 0 #6b7fd7 !important; }
-  #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 100;
+  /* 로그인 폼이 헤더에 있어 알림도 화면 위쪽에 띄운다. 모달(z 200)보다 위 */
+  #toast { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); z-index: 300;
     display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
   #modal { position: fixed; inset: 0; background: rgba(0,0,0,.28); z-index: 200;
     display: flex; align-items: center; justify-content: center; }
@@ -95,6 +108,21 @@
     max-width: 92vw; max-height: 80vh; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
   .modal-body { padding: 24px 26px; max-height: 80vh; overflow: auto; }
   .vrow { display: flex; align-items: center; gap: 8px; padding: 11px 0; border-bottom: 1px solid #f0f0ec; }
+  /* ---- 관리자 페이지 ---- */
+  .adm { max-width: 940px; margin: 20px auto; }
+  .adm h2 { font-size: 20px; margin-bottom: 4px; }
+  .adm section { background: #fff; border: 1px solid #e5e5e0; border-radius: 10px;
+    padding: 16px 18px; margin-top: 14px; }
+  .adm h3 { font-size: 15px; margin-bottom: 10px; }
+  .adm table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .adm th, .adm td { border-bottom: 1px solid #f0f0ec; padding: 8px 6px; text-align: left; }
+  .adm th { color: #888; font-weight: 600; font-size: 12px; }
+  .adm td .btn { padding: 4px 9px; font-size: 12px; }
+  .rolesel { border: 1px solid #e2e2dd; background: #f7f7f5; border-radius: 6px;
+    padding: 3px 8px; font-size: 12px; font-family: inherit; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #eee; color: #666; }
+  .pill.on { background: #e2eddd; color: #4a7a4a; }
+  .pill.off { background: #f7e0e0; color: #a95a5a; }
   #toast div { background: #333; color: #fff; padding: 9px 16px; border-radius: 8px; font-size: 13px;
     box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: pre-line; }
   .node-card:hover .grip, .dir-item:hover .grip { color: #8f8f89; }
@@ -196,8 +224,19 @@
   #prd-edit { width: 100%; max-width: 820px; display: block; margin: 0 auto 12px; min-height: 65vh; padding: 20px;
     border: 1px solid #ddd; border-radius: 10px; font-size: 14px; font-family: Consolas, monospace; line-height: 1.6; }
   .toolbar { max-width: 820px; margin: 0 auto 14px; display: flex; justify-content: flex-end; gap: 8px; }
-  .desc-md h3, .desc-md h4, .desc-md h5, .desc-md h6 { margin: 14px 0 6px; }
-  .desc-md h4 { font-size: 14px; } .desc-md h5, .desc-md h6 { font-size: 13px; } .desc-md h6 { color: #777; } .desc-md ul { padding-left: 20px; } .desc-md p { margin: 6px 0; }
+  /* 본문 제목: 크기를 모두 지정한다. 지정하지 않으면 h1 이 .detail h1(항목 제목용, 22px)을
+     물려받고 h2·h3 는 브라우저 기본값이라 # 보다 ## 가 커지는 역전이 생긴다 */
+  .desc-md h1, .desc-md h2, .desc-md h3,
+  .desc-md h4, .desc-md h5, .desc-md h6,
+  .gdesc h1, .gdesc h2, .gdesc h3, .gdesc h4, .gdesc h5, .gdesc h6,
+  #termtip h1, #termtip h2, #termtip h3, #termtip h4, #termtip h5, #termtip h6 { margin: 14px 0 6px; }
+  .desc-md h1, .gdesc h1, #termtip h1 { font-size: 20px; }
+  .desc-md h2, .gdesc h2, #termtip h2 { font-size: 17px; }
+  .desc-md h3, .gdesc h3, #termtip h3 { font-size: 15px; }
+  .desc-md h4, .gdesc h4, #termtip h4 { font-size: 14px; }
+  .desc-md h5, .desc-md h6, .gdesc h5, .gdesc h6, #termtip h5, #termtip h6 { font-size: 13px; }
+  .desc-md h6, .gdesc h6, #termtip h6 { color: #777; }
+  .desc-md ul { padding-left: 20px; } .desc-md p { margin: 6px 0; }
 </style>
 </head>
 <body>
@@ -206,6 +245,7 @@
     <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="PRD & 기능명세서" height="28"></button>
     <b id="proj-name"></b>
     <button class="btn ibtn" id="btn-glossary" onclick="openGlossary()" title="용어 사전" aria-label="용어 사전"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5.2 8.5 4.5 6 4.5H3v14h3c2.5 0 4.5.7 6 2 1.5-1.3 3.5-2 6-2h3v-14h-3c-2.5 0-4.5.7-6 2z"/><path d="M12 6.5v12"/></svg></button>
+    <button class="btn ibtn" id="btn-save" onclick="saveVersion()" title="현재 상태 저장 (PRD + 기능명세서)" aria-label="현재 상태 저장"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M8 4v5h6V4"/><path d="M8 21v-6h8v6"/></svg></button>
   </div>
   <div class="tabs" id="tabs">
     <button id="tab-prd" class="active" onclick="setTab('prd')">PRD</button>
@@ -261,8 +301,8 @@ function closeModal() {
 // ---------- 기능명세서 버전 기록 ----------
 let versions = [];
 function versionsHTML() {
-  return `<h3 style="margin-bottom:6px">기능명세서 버전 기록</h3>
-    <p class="hint" style="margin:0 0 16px">현재 상태를 저장해 두고 언제든 그 시점으로 되돌릴 수 있습니다.</p>
+  return `<h3 style="margin-bottom:6px">버전 기록</h3>
+    <p class="hint" style="margin:0 0 16px">PRD 와 기능명세서를 함께 저장해 두고 언제든 그 시점으로 되돌릴 수 있습니다.</p>
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <button class="btn primary" onclick="saveVersion()">현재 상태 저장</button>
       <button class="btn" onclick="closeModal()">닫기</button>
@@ -287,14 +327,14 @@ async function saveVersion() {
   try {
     const v = await api(`/api/projects/${project.id}/versions`, { method: 'POST' });
     versions = await api(`/api/projects/${project.id}/versions`);
-    paintModal();
-    toast(`버전을 저장했습니다 (항목 ${v.node_count}개)`);
+    if (!document.getElementById('modal').hidden) paintModal();   // 헤더 버튼으로도 부른다
+    toast(`PRD 와 기능명세서를 저장했습니다 (항목 ${v.node_count}개)`);
   } catch (e) { toast(e.detail || '버전 저장 실패'); }
 }
 async function restoreVersion(id) {
   try {
     const r = await api(`/api/versions/${id}/restore`, { method: 'POST' });
-    setNodes(await reloadNodes()); await loadTerms();
+    await openProjectData();                        // PRD 도 함께 되돌아온다
     selectedId = null; closeModal(); render();
     toast(`해당 시점으로 되돌렸습니다 (항목 ${r.restored}개)`);
   } catch (e) { toast(e.detail || '불러오기 실패'); }
@@ -344,7 +384,9 @@ const api = (url, opt = {}) => {
 function renderAuth() {
   const el = document.getElementById('authbox');
   el.innerHTML = auth
-    ? `<span style="font-size:14px;color:#555"><b>${esc(auth.username)}</b> 님</span>
+    ? `<button class="btn ibtn avatar-btn" onclick="toggleProfile()" title="내 계정" aria-label="내 계정">${avatarHTML(profile && profile.avatar, 28)}</button>
+       <span style="font-size:14px;color:#555"><b>${esc(auth.username)}</b> 님</span>
+       ${profileOpen ? profileMenuHTML() : ''}
        <button class="btn danger ibtn" onclick="doLogout()" title="로그아웃" aria-label="로그아웃"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/></svg></button>`
     : `<input type="text" id="au-id" placeholder="사용자 이름" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px">
        <input type="password" id="au-pw" placeholder="비밀번호" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px"
@@ -352,8 +394,123 @@ function renderAuth() {
        <button class="btn primary" onclick="doLogin()">로그인</button>
        <button class="btn" onclick="doRegister()">회원가입</button>`;
 }
+// ---------- 내 계정 팝오버 ----------
+let profileOpen = false, profile = null;
+
+const USER_SVG = size => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>`;
+const avatarHTML = (src, size) => src
+  ? `<img src="${src}" alt="" style="width:${size}px;height:${size}px;object-fit:cover;display:block">`
+  : USER_SVG(Math.round(size * 0.8));
+
+// 남은 양을 채움 막대로 보여 준다. limit 이 null 이면 무제한
+function gaugeHTML(label, used, limit, fmt) {
+  const inf = limit == null;
+  const pct = inf ? 0 : Math.min(100, used / limit * 100);
+  return `<div style="margin-top:11px">
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:#666">
+      <span>${label}</span><span>${fmt(used)} / ${inf ? '무제한' : fmt(limit)}</span></div>
+    <div class="gauge${pct >= 90 ? ' warn' : ''}"><i style="width:${pct}%"></i></div>
+    <div style="font-size:11px;color:#aaa;margin-top:3px">${
+      inf ? '한도 없음' : '남은 양 ' + fmt(Math.max(0, limit - used))}</div>
+  </div>`;
+}
+
+function profileMenuHTML() {
+  const m = profile;
+  if (!m) return `<div class="fmenu" style="right:0;min-width:250px;padding:14px;color:#aaa;font-size:13px">불러오는 중…</div>`;
+  return `<div class="fmenu" style="right:0;min-width:258px;padding:14px">
+    <div style="display:flex;align-items:center;gap:11px">
+      <label class="avatar-pick" style="width:54px;height:54px" title="프로필 이미지 등록">
+        ${avatarHTML(m.avatar, 54)}
+        <input type="file" accept="image/*" hidden onchange="pickAvatar(this)">
+      </label>
+      <div style="min-width:0">
+        <div style="font-weight:600;font-size:14px;margin-bottom:4px">${esc(m.username)}</div>
+        <span class="badge">${ROLE_LABEL[m.role] || m.role}</span>
+      </div>
+    </div>
+    <p class="hint" style="margin:8px 0 0">사진을 눌러 프로필 이미지를 등록합니다.${
+      m.avatar ? ' <a href="#" onclick="return removeAvatar()">지우기</a>' : ''}</p>
+    ${gaugeHTML('프로젝트', m.projects, m.project_limit, n => n + '개')}
+    ${gaugeHTML('이미지 용량', m.upload_bytes, m.upload_limit, MB)}
+    <button class="btn" style="width:100%;margin-top:13px" onclick="pwModal()">비밀번호 변경</button>
+  </div>`;
+}
+
+async function toggleProfile() {
+  profileOpen = !profileOpen;
+  renderAuth();
+  if (!profileOpen) return;
+  try { profile = await api('/api/me'); }
+  catch (e) { profile = null; toast(e.detail || '계정 정보를 불러오지 못했습니다.'); }
+  renderAuth();
+}
+
+// 파일을 128px 정사각형으로 줄여 data URL 로 만든다 (원본 그대로면 DB 가 커진다)
+function shrinkAvatar(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader(), img = new Image();
+    fr.onerror = rej; img.onerror = rej;
+    fr.onload = () => { img.src = fr.result; };
+    img.onload = () => {
+      const S = 128, c = document.createElement('canvas');
+      c.width = c.height = S;
+      const m = Math.min(img.width, img.height);
+      c.getContext('2d').drawImage(img, (img.width - m) / 2, (img.height - m) / 2, m, m, 0, 0, S, S);
+      res(c.toDataURL('image/jpeg', 0.85));
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+async function saveAvatar(dataUrl) {
+  await api('/api/me/avatar', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ avatar: dataUrl }) });
+  if (profile) profile.avatar = dataUrl;
+  renderAuth();
+}
+async function pickAvatar(input) {
+  const f = input.files[0];
+  if (!f) return;
+  try { await saveAvatar(await shrinkAvatar(f)); toast('프로필 이미지를 등록했습니다.'); }
+  catch (e) { toast(e.detail || '이미지를 등록하지 못했습니다.'); }
+}
+function removeAvatar() {
+  saveAvatar(null).then(() => toast('프로필 이미지를 지웠습니다.'))
+    .catch(e => toast(e.detail || '삭제 실패'));
+  return false;
+}
+
+function pwModal() {
+  profileOpen = false; renderAuth();
+  showModal(() => `<h3 style="margin-bottom:6px">비밀번호 변경</h3>
+    <p class="hint" style="margin:0 0 12px">바꾸면 다른 기기의 로그인은 모두 끊기고,
+      이 브라우저만 그대로 이어집니다.</p>
+    <input class="inline-edit" id="my-pw-cur" type="password" placeholder="현재 비밀번호">
+    <input class="inline-edit" id="my-pw-new" type="password" placeholder="새 비밀번호 (4자 이상)"
+      style="margin-top:8px" onkeydown="if(event.key==='Enter')document.getElementById('my-pw-new2').focus()">
+    <input class="inline-edit" id="my-pw-new2" type="password" placeholder="새 비밀번호 확인"
+      style="margin-top:8px" onkeydown="if(event.key==='Enter')changeMyPassword()">
+    <div class="btnrow"><button class="btn primary" onclick="changeMyPassword()">변경</button>
+      <button class="btn" onclick="closeModal()">취소</button></div>`);
+  setTimeout(() => document.getElementById('my-pw-cur')?.focus(), 50);
+}
+async function changeMyPassword() {
+  const pw = document.getElementById('my-pw-new').value;
+  if (pw !== document.getElementById('my-pw-new2').value) return toast('새 비밀번호가 서로 다릅니다.');
+  try {
+    const r = await api('/api/me/password', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current: document.getElementById('my-pw-cur').value,
+                             password: pw }) });
+    closeModal(); setAuth(r); toast('비밀번호를 변경했습니다.');
+  } catch (e) { toast(e.detail || '변경 실패'); }
+}
+
 function setAuth(a) {
-  auth = a; localStorage.setItem('auth', JSON.stringify(a)); renderAuth();
+  auth = a; localStorage.setItem('auth', JSON.stringify(a));
+  profile = null; profileOpen = false; renderAuth();
+  // 로그인 응답에는 프로필 이미지가 없다. 바로 받아와 헤더 아이콘에 반영한다
+  api('/api/me').then(m => { profile = m; renderAuth(); }).catch(() => {});
   if (shareToken) render(); else loadProjects().then(render);
 }
 async function doLogin() {
@@ -364,14 +521,25 @@ async function doLogin() {
 }
 async function doRegister() {
   try {
-    setAuth(await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
+    const r = await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) });
+    if (r.status === 'pending') {          // 관리자 승인을 기다리는 상태
+      showModal(() => `<h3 style="margin-bottom:10px">가입 신청 완료</h3>
+        <p class="hint" style="margin:0 0 14px;line-height:1.8">${esc(r.message)}<br>
+          승인되면 같은 아이디·비밀번호로 로그인할 수 있습니다.</p>
+        <div class="btnrow"><button class="btn primary" onclick="closeModal()">확인</button></div>`);
+      return;
+    }
+    setAuth(r);
   } catch (e) { toast(e.detail || '회원가입 실패'); }
 }
 async function doLogout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
   auth = null; localStorage.removeItem('auth');
+  profileOpen = false; profile = null;
   if (!shareToken) { project = null; projects = []; }
+  admin.open = false; admin.users = []; admin.signups = []; admin.settings = null;
+  album.open = false; commentCache.clear(); closeModal();
   renderAuth(); render();
 }
 
@@ -573,9 +741,10 @@ function toggleImp(v) {
 function setAllImp(on) { impFilter = new Set(on ? MOSCOW.map(m => m.v) : []); render(); }
 // 바깥을 클릭하면 메뉴를 닫는다
 document.addEventListener('click', e => {
-  if (!filterOpen && !moreOpen) return;
+  if (!filterOpen && !moreOpen && !profileOpen) return;
   // 다시 그리면서 교체된 요소의 클릭은 '바깥 클릭'이 아니다
   if (!e.target.isConnected) return;
+  if (profileOpen && !e.target.closest('#authbox')) { profileOpen = false; renderAuth(); }
   let changed = false;
   if (filterOpen && !e.target.closest('#impfilter')) { filterOpen = false; changed = true; }
   if (moreOpen && !e.target.closest('#moremenu')) { moreOpen = false; changed = true; }
@@ -878,40 +1047,222 @@ document.addEventListener('mouseout', e => {
 document.getElementById('termtip').addEventListener('mouseenter', keepTip);
 document.getElementById('termtip').addEventListener('mouseleave', () => { tipEl().hidden = true; });
 
-// ---------- MCP 연결 가이드 ----------
-let _mcpCmd = '', _mcpJson = '';
-function copyMcp(which) {
-  copyText(which === 'cmd' ? _mcpCmd : _mcpJson)
-    .then(ok => toast(ok ? '복사했습니다. 터미널에 붙여넣기 하세요.' : '복사 실패'));
+// ---------- 플러그인 설치 가이드 ----------
+const MARKETPLACE = 'kdHyeok/prd-spec-demo';   // .claude-plugin/marketplace.json 이 있는 저장소
+let _blocks = {};
+function copyBlock(k) {
+  copyText(_blocks[k]).then(ok => toast(ok ? '복사했습니다. 터미널에 붙여넣기 하세요.' : '복사 실패'));
 }
-function mcpGuideHTML() {
+const cmdBox = (key, text) => {
+  _blocks[key] = text;
+  return `<div class="mcp-cmd"><pre style="margin:0;white-space:pre-wrap">${esc(text)}</pre>
+    <button class="btn" onclick="copyBlock('${key}')">복사</button></div>`;
+};
+
+function pluginGuideHTML() {
   const url = location.origin + '/mcp';
-  const cmd = `claude mcp add --transport http prd-spec ${url} -H "Authorization: Bearer ${auth.token}"`;
+  const bash = `export PRDSPEC_URL=${url}\nexport PRDSPEC_TOKEN=${auth.token}`;
+  const pwsh = `$env:PRDSPEC_URL = "${url}"\n$env:PRDSPEC_TOKEN = "${auth.token}"`;
+  const install = `claude plugin marketplace add ${MARKETPLACE}\nclaude plugin install prd-spec@${MARKETPLACE.split('/')[1]}`;
+  const mcpOnly = `claude mcp add --transport http prd-spec ${url} -H "Authorization: Bearer ${auth.token}"`;
   const json = JSON.stringify({
     mcpServers: { 'prd-spec': { type: 'http', url, headers: { Authorization: 'Bearer ' + auth.token } } }
   }, null, 2);
-  _mcpCmd = cmd; _mcpJson = json;
-  return `<h3 style="margin-bottom:6px">MCP 연결</h3>
+
+  return `<h3 style="margin-bottom:6px">플러그인 설치</h3>
     <p class="hint" style="margin:0 0 14px">AI 에이전트가 이 서비스의 PRD·기능명세서를 직접 읽고 고칠 수 있습니다.
-      설치할 것은 없고 아래 명령 한 줄만 실행하면 됩니다.</p>
+      플러그인에는 <b>MCP 연결</b>과 <b>본문 작성 규칙 스킬</b>이 함께 들어 있습니다.</p>
 
-    <b style="font-size:13px">1. Claude Code</b>
-    <div class="mcp-cmd"><code>${esc(cmd)}</code>
-      <button class="btn" onclick="copyMcp('cmd')">복사</button></div>
+    <b style="font-size:13px">1. 토큰·주소를 환경변수로 둡니다</b>
+    <p class="hint" style="margin:4px 0 6px">macOS·Linux (bash·zsh)</p>
+    ${cmdBox('bash', bash)}
+    <p class="hint" style="margin:4px 0 6px">Windows PowerShell</p>
+    ${cmdBox('pwsh', pwsh)}
 
-    <b style="font-size:13px">2. 그 밖의 클라이언트(Cursor·Claude Desktop 등)</b>
-    <p class="hint" style="margin:4px 0 6px">설정 파일에 아래를 넣으세요.</p>
-    <div class="mcp-cmd"><pre style="margin:0;white-space:pre-wrap">${esc(json)}</pre>
-      <button class="btn" onclick="copyMcp('json')">복사</button></div>
+    <b style="font-size:13px">2. 플러그인을 설치합니다 (Claude Code)</b>
+    ${cmdBox('install', install)}
+    <p class="hint" style="margin:-8px 0 14px">설치 후 Claude Code 를 재시작하고,
+      <code>/mcp</code> 에서 <code>plugin:prd-spec:prd-spec</code> 연결과
+      <code>/plugin</code> 에서 스킬 <code>prd-spec</code> 을 확인하세요.
+      저장소를 클론해 뒀다면 <code>claude plugin marketplace add ./</code> 로도 등록됩니다.</p>
+
+    <b style="font-size:13px">3. 플러그인 없이 MCP 만 붙이려면</b>
+    <p class="hint" style="margin:4px 0 6px">Claude Code — 같은 이름을 수동 등록하면 플러그인 설정을 가리므로
+      둘 중 하나만 씁니다(<code>claude mcp remove prd-spec</code> 로 정리).</p>
+    ${cmdBox('mcpOnly', mcpOnly)}
+    <p class="hint" style="margin:4px 0 6px">그 밖의 클라이언트(Cursor·Claude Desktop 등)는 설정 파일에 넣으세요.</p>
+    ${cmdBox('json', json)}
 
     <p class="hint" style="margin:12px 0 0">토큰은 <b>${esc(auth.username)}</b> 님의 로그인 세션입니다.
       이 토큰을 가진 사람은 회원님의 모든 프로젝트를 읽고 고칠 수 있으니 공유하지 마세요.
-      로그아웃하면 즉시 무효가 되고, 그때는 다시 등록해야 합니다.</p>
+      로그아웃하면 즉시 무효가 되고, 그때는 환경변수를 다시 채워야 합니다.</p>
     <p class="hint" style="margin:6px 0 0">쓸 수 있는 툴: 프로젝트 목록 · 명세 조회 · PRD 저장 ·
       항목 추가/수정/삭제 · 용어 사전 · 버전 저장/복원 · 코멘트</p>
     <div class="btnrow"><button class="btn" onclick="closeModal()">닫기</button></div>`;
 }
-function openMcpGuide() { moreOpen = false; render(); showModal(mcpGuideHTML); }
+function openPluginGuide() { moreOpen = false; render(); showModal(pluginGuideHTML); }
+
+// ---------- 관리자 페이지 ----------
+const ROLE_LABEL = { admin: '관리자 (무제한)', pro: 'pro (5개)', member: 'member (3개)', guest: 'guest (1개)' };
+let admin = { open: false, users: [], signups: [], settings: null };
+
+async function openAdmin() {
+  moreOpen = false;
+  admin.open = true;
+  project = null; selectedId = null; album.open = false;
+  await loadAdmin();
+}
+async function loadAdmin() {
+  try {
+    const [users, signups, settings] = await Promise.all([
+      api('/api/admin/users'), api('/api/admin/signups'), api('/api/admin/settings')]);
+    admin.users = users; admin.signups = signups; admin.settings = settings;
+  } catch (e) { toast(e.detail || '관리자 정보를 불러올 수 없습니다'); admin.open = false; }
+  render();
+}
+function closeAdmin() { admin.open = false; loadProjects().then(render); }
+
+const limitText = u => u.project_limit == null ? '무제한' : u.project_limit + '개';
+const MB = b => (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + 'MB';
+const usageText = u => MB(u.upload_bytes) + ' / ' + (u.upload_limit == null ? '무제한' : MB(u.upload_limit));
+const roleOptions = cur => Object.keys(ROLE_LABEL)
+  .map(r => `<option value="${r}" ${r === cur ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('');
+
+async function admApprove(uid, sel) {
+  try {
+    const r = await api(`/api/admin/signups/${uid}/approve`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: sel.value }) });
+    toast(`${r.username} 님을 ${r.role} 등급으로 승인했습니다.`);
+    await loadAdmin();
+  } catch (e) { toast(e.detail || '승인 실패'); }
+}
+async function admReject(uid) {
+  try {
+    await api(`/api/admin/signups/${uid}/reject`, { method: 'POST' });
+    await loadAdmin(); toast('가입 신청을 거절했습니다.');
+  } catch (e) { toast(e.detail || '거절 실패'); }
+}
+async function admSetRole(uid, role) {
+  try {
+    await api(`/api/admin/users/${uid}/role`, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
+    await loadAdmin(); toast('등급을 변경했습니다.');
+  } catch (e) { toast(e.detail || '등급 변경 실패'); await loadAdmin(); }
+}
+async function admDeleteUser(uid) {
+  try {
+    await api('/api/admin/users/' + uid, { method: 'DELETE' });
+    await loadAdmin(); toast('계정과 그 계정의 모든 데이터를 삭제했습니다.');
+  } catch (e) { toast(e.detail || '삭제 실패'); }
+}
+function admPasswordModal(uid, username) {
+  showModal(() => `<h3 style="margin-bottom:6px">비밀번호 변경 — ${esc(username)}</h3>
+    <p class="hint" style="margin:0 0 12px">변경하면 이 계정의 로그인 세션이 모두 끊기고,
+      로그인 잠금도 함께 풀립니다.</p>
+    <input class="inline-edit" id="adm-pw" type="password" placeholder="새 비밀번호 (4자 이상)"
+      onkeydown="if(event.key==='Enter')admSetPassword(${uid})">
+    <div class="btnrow"><button class="btn primary" onclick="admSetPassword(${uid})">변경</button>
+      <button class="btn" onclick="closeModal()">취소</button></div>`);
+  setTimeout(() => document.getElementById('adm-pw')?.focus(), 50);
+}
+async function admSetPassword(uid) {
+  const pw = document.getElementById('adm-pw').value;
+  try {
+    await api(`/api/admin/users/${uid}/password`, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) });
+    closeModal(); toast('비밀번호를 변경했습니다.');
+  } catch (e) { toast(e.detail || '변경 실패'); }
+}
+async function admProjects(uid) {
+  try {
+    const info = await api(`/api/admin/users/${uid}/projects`);
+    showModal(() => `<h3 style="margin-bottom:6px">${esc(info.username)} 님의 프로젝트</h3>
+      <p class="hint" style="margin:0 0 12px">${info.projects.length} / ${info.project_limit == null ? '무제한' : info.project_limit + '개'}
+        · ${ROLE_LABEL[info.role] || info.role}</p>
+      ${info.projects.length ? info.projects.map(p => `<div class="vrow">
+          <div style="flex:1"><b>${esc(p.name)}</b>
+            <div style="font-size:12px;color:#888">기능 ${p.nodes}개 · 이미지 ${p.images}개${p.shared ? ' · 공유 링크 있음' : ''}</div></div>
+          <button class="btn danger" onclick="twoStep('admproj:${p.id}', () => admDeleteProject(${p.id}, ${uid}))">${askLabel('admproj:' + p.id, '삭제')}</button>
+        </div>`).join('') : '<p style="color:#aaa;padding:12px 0">프로젝트가 없습니다.</p>'}
+      <div class="btnrow"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+  } catch (e) { toast(e.detail || '조회 실패'); }
+}
+async function admDeleteProject(pid, uid) {
+  try {
+    await api('/api/admin/projects/' + pid, { method: 'DELETE' });
+    await loadAdmin(); await admProjects(uid); toast('프로젝트를 삭제했습니다.');
+  } catch (e) { toast(e.detail || '삭제 실패'); }
+}
+async function admToggleSignup() {
+  try {
+    const r = await api('/api/admin/settings', { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signup_open: !admin.settings.signup_open }) });
+    toast(r.signup_open ? '신규 가입을 허용합니다.' : '신규 가입을 받지 않습니다.');
+    await loadAdmin();
+  } catch (e) { toast(e.detail || '변경 실패'); }
+}
+
+function renderAdmin(c) {
+  const st = admin.settings || {};
+  c.innerHTML = `<div class="adm">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="flex:1">관리자</h2>
+      <button class="btn" onclick="closeAdmin()">← 내 프로젝트로</button>
+    </div>
+    <p class="hint" style="margin:0">등급별 프로젝트 한도 —
+      ${Object.values(ROLE_LABEL).join(' · ')}<br>
+      등급별 이미지 총량 —
+      ${Object.entries(st.upload_limits_mb || {}).map(([r, mb]) =>
+        `${r} ${mb == null ? '무제한' : mb + 'MB'}`).join(' · ')}<br>
+      같은 IP 에서 한 계정에 ${st.login_max_fails}회, 또는 한 IP 에서 ${st.login_ip_max_fails}회
+      로그인 실패 시 잠금 — 반복될수록
+      ${(st.login_lock_steps || []).map(v => v < 60 ? v + '초' : (v / 60) + '분').join(' → ')} 로 늘어남</p>
+
+    <section>
+      <h3>신규 가입</h3>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="pill ${st.signup_open ? 'on' : 'off'}">${st.signup_open ? '허용' : '차단'}</span>
+        <span class="hint" style="flex:1">${st.signup_open
+          ? '누구나 가입을 신청할 수 있고, 아래 목록에서 승인해야 로그인됩니다.'
+          : '새 가입 신청을 받지 않습니다.'}</span>
+        <button class="btn" onclick="admToggleSignup()">${st.signup_open ? '가입 차단' : '가입 허용'}</button>
+      </div>
+      <h3 style="margin:16px 0 8px">가입 신청 (${admin.signups.length})</h3>
+      ${admin.signups.length ? `<table>
+        <tr><th>사용자</th><th>신청 시각</th><th>승인 등급</th><th></th></tr>
+        ${admin.signups.map(u => `<tr>
+          <td><b>${esc(u.username)}</b></td>
+          <td>${new Date(u.created_at).toLocaleString()}</td>
+          <td><select class="rolesel" id="apr-${u.id}">${roleOptions('guest')}</select></td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn primary" onclick="admApprove(${u.id}, document.getElementById('apr-${u.id}'))">승인</button>
+            <button class="btn danger" onclick="twoStep('rej:${u.id}', () => admReject(${u.id}))">${askLabel('rej:' + u.id, '거절')}</button>
+          </td></tr>`).join('')}
+      </table>` : '<p style="color:#aaa">대기 중인 신청이 없습니다.</p>'}
+    </section>
+
+    <section>
+      <h3>계정 (${admin.users.length})</h3>
+      <table>
+        <tr><th>사용자</th><th>등급</th><th>프로젝트</th><th>이미지 용량</th><th>가입</th><th></th></tr>
+        ${admin.users.map(u => `<tr>
+          <td><b>${esc(u.username)}</b>${u.username === auth.username ? ' <span class="pill">나</span>' : ''}</td>
+          <td><select class="rolesel" onchange="admSetRole(${u.id}, this.value)">${roleOptions(u.role)}</select></td>
+          <td>${u.projects} / ${limitText(u)}</td>
+          <td>${usageText(u)}</td>
+          <td>${new Date(u.created_at).toLocaleDateString()}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn" onclick="admProjects(${u.id})">프로젝트</button>
+            <button class="btn" onclick="admPasswordModal(${u.id}, '${esc(u.username)}')">비밀번호</button>
+            <button class="btn danger" onclick="twoStep('admuser:${u.id}', () => admDeleteUser(${u.id}))">${askLabel('admuser:' + u.id, '완전 삭제')}</button>
+          </td></tr>`).join('')}
+      </table>
+      <p class="hint" style="margin:10px 0 0">완전 삭제는 그 계정의 프로젝트·기능 항목·이미지·코멘트까지
+        DB 에서 모두 지웁니다. 되돌릴 수 없습니다.</p>
+    </section>
+  </div>`;
+}
 
 // ---------- 이미지 앨범 ----------
 let album = { open: false, items: [], sel: new Set() };
@@ -1102,7 +1453,69 @@ async function moveNode(id, dir) {
 const MV = id => `<button class="mv" title="위로" onclick="event.stopPropagation();moveNode(${id},-1)">▲</button><button class="mv" title="아래로" onclick="event.stopPropagation();moveNode(${id},1)">▼</button>`;
 
 // ---------- rendering ----------
+// ---------- 라우팅 (/, /project/<id>, /admin) ----------
+// 화면 상태가 곧 주소다. render() 가 주소를 맞추고, 뒤로 가기는 주소가 상태를 맞춘다.
+// 보고 있는 화면(탭·뷰)을 쿼리로. 뷰 종류는 기능명세서 탭에서만 의미가 있다
+function viewParams() {
+  if (tab !== 'spec') return [];
+  return view === 'dir' ? ['tab=spec', 'view=dir'] : ['tab=spec'];
+}
+// 주소의 tab·view 를 상태로. 없으면 기본값(PRD · 트리)
+function readViewParams() {
+  const q = new URLSearchParams(location.search);
+  tab = q.get('tab') === 'spec' ? 'spec' : 'prd';
+  view = q.get('view') === 'dir' ? 'dir' : 'tree';
+}
+function routePath() {
+  // 공유 링크는 프로젝트 id 를 드러내지 않는다 — 토큰 + 보고 있는 화면만
+  if (shareToken) return '/?' + ['share=' + encodeURIComponent(shareToken), ...viewParams()].join('&');
+  if (admin.open) return '/admin';
+  if (!project) return '/';
+  const q = viewParams();
+  return '/project/' + project.id + (q.length ? '?' + q.join('&') : '');
+}
+let firstSync = true;
+function syncUrl() {
+  const p = routePath();
+  if (p !== location.pathname + location.search) {
+    // 첫 렌더는 주소를 바로잡는 것뿐이라 기록을 남기지 않는다 (없는 프로젝트 주소 등)
+    history[firstSync ? 'replaceState' : 'pushState'](null, '', p);
+  }
+  firstSync = false;
+}
+// 주소를 읽어 화면 상태를 맞춘다. 프로젝트 목록은 미리 불러와 있어야 한다
+async function applyRoute() {
+  readViewParams();     // 없는 값은 기본값으로 되돌려야 뒤로 가기가 탭·뷰까지 되돌린다
+  album.open = false; selectedId = null;
+  if (shareToken) return;   // 공유 링크는 프로젝트가 고정이라 탭·뷰만 따라가면 된다
+  if (location.pathname.startsWith('/admin')) {
+    if (auth && auth.role === 'admin') {
+      admin.open = true; project = null;
+      await loadAdmin();
+      return;
+    }
+    if (auth) toast('관리자만 볼 수 있는 화면입니다.');
+  } else {
+    const m = location.pathname.match(/^\/project\/(\d+)/);
+    if (m && auth) {
+      const p = projects.find(x => x.id === +m[1]);
+      if (p) {
+        admin.open = false; project = p;
+        collapsed = new Set(); commentCache.clear(); panelStamp = '';
+        await openProjectData();
+        return;
+      }
+      toast('프로젝트를 찾을 수 없습니다.');
+    }
+  }
+  project = null; admin.open = false;
+}
+window.addEventListener('popstate', async () => { await applyRoute(); render(); });
+
 function render() {
+  syncUrl();
+  // 로그아웃·등급 강등·세션 만료 시 관리자 화면에 남지 않는다
+  if (admin.open && (!auth || auth.role !== 'admin')) { admin.open = false; }
   const c = document.getElementById('content');
   // 다시 그릴 때 스크롤이 맨 위로 튀지 않도록 위치를 기억한다
   const keep = { top: c.scrollTop, left: c.scrollLeft,
@@ -1116,6 +1529,7 @@ function render() {
   const has = !!project;
   if (!editingName) document.getElementById('proj-name').textContent = has ? project.name : '';
   document.getElementById('btn-glossary').style.display = has ? 'inline-flex' : 'none';
+  document.getElementById('btn-save').style.display = has && auth ? 'inline-flex' : 'none';
   const nameEl = document.getElementById('proj-name');
   const canRename = has && !!auth && !shareToken;
   nameEl.classList.toggle('editable', canRename);
@@ -1129,13 +1543,15 @@ function render() {
   document.getElementById('tabs').style.display = has ? '' : 'none';
   document.getElementById('viewtoggle').style.display = has && tab === 'spec' ? '' : 'none';
   const mEl = document.getElementById('moremenu');
-  mEl.style.display = has ? 'block' : 'none';
-  mEl.innerHTML = has ? `<button class="btn ibtn" onclick="event.stopPropagation();toggleMore()" title="메뉴" aria-label="메뉴"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  const showMenu = has || (!!auth && !shareToken);   // 프로젝트 목록·관리자 화면에서도 메뉴를 쓴다
+  mEl.style.display = showMenu ? 'block' : 'none';
+  mEl.innerHTML = showMenu ? `<button class="btn ibtn" onclick="event.stopPropagation();toggleMore()" title="메뉴" aria-label="메뉴"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     ${moreOpen ? `<div class="fmenu" style="left:auto;right:0;min-width:210px">
-      ${auth ? `<div class="fitem act" onclick="openVersions()">기능명세서 버전 기록<br><small>현재 상태 저장 · 이전 시점으로 되돌리기</small></div>` : ''}
-      <div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>
-      ${auth ? `<div class="fitem act" onclick="openMcpGuide()">MCP 연결<br><small>AI 에이전트로 이 프로젝트 읽고 고치기</small></div>` : ''}
-      <div class="fitem act" onclick="openAlbum()">이미지 앨범<br><small>업로드한 이미지 보기 · 링크 복사 · 삭제</small></div>
+      ${has && auth ? `<div class="fitem act" onclick="openVersions()">버전 기록<br><small>PRD · 기능명세서 저장 · 이전 시점으로 되돌리기</small></div>` : ''}
+      ${has ? `<div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>` : ''}
+      ${auth ? `<div class="fitem act" onclick="openPluginGuide()">플러그인 설치<br><small>AI 에이전트로 이 프로젝트 읽고 고치기</small></div>` : ''}
+      ${has ? `<div class="fitem act" onclick="openAlbum()">이미지 앨범<br><small>업로드한 이미지 보기 · 링크 복사 · 삭제</small></div>` : ''}
+      ${auth && auth.role === 'admin' ? `<div class="fitem act" onclick="openAdmin()">관리자<br><small>계정 등급 · 가입 승인 · 프로젝트 관리</small></div>` : ''}
     </div>` : ''}` : '';
   const showTools = has && tab === 'spec';
   document.getElementById('contenttools').style.display = showTools ? 'flex' : 'none';
@@ -1151,6 +1567,16 @@ function render() {
         <button class="btn" style="padding:3px 9px;font-size:12px" onclick="setAllImp(true)">전체 선택</button>
         <button class="btn" style="padding:3px 9px;font-size:12px" onclick="setAllImp(false)">전체 해제</button>
       </div></div>` : ''}`;
+  if (admin.open) {
+    document.getElementById('panel').classList.remove('open');
+    document.getElementById('album').hidden = true;
+    document.getElementById('tabs').style.display = 'none';
+    document.getElementById('contenttools').style.display = 'none';
+    document.getElementById('proj-name').textContent = '';
+    renderAdmin(c);
+    if (modalRender) paintModal();
+    return;
+  }
   if (!has) {
     renderProjects(c);
     document.getElementById('panel').classList.remove('open');
@@ -1215,10 +1641,12 @@ async function openProjectData() {
   const [n, p] = await Promise.all([
     api(`/api/projects/${project.id}/nodes`), api(`/api/projects/${project.id}/prd`)]);
   setNodes(n); prdContent = p.content;
+  collapsed = allParentIds();      // 처음에는 전부 접힌 상태로 연다
   await loadTerms();
 }
 async function openProject(id) {
   project = projects.find(p => p.id === id);
+  admin.open = false;
   selectedId = null; collapsed = new Set();
   commentCache.clear(); panelStamp = '';
   await openProjectData(); render();
@@ -1370,7 +1798,7 @@ function renderTree(c) {
     const closed = collapsed.has(n.id);
     const color = depth === 0 ? 'c' + (rootIdx % 7) : 'cchild';
     return `<div class="mm-branch">
-      <span class="node-card ${color} ${n.id === selectedId ? 'selected' : ''}" data-id="${n.id}" onclick="select(${n.id})" ${DND(n.id)} ${DROP(n.id)}>
+      <span class="node-card ${color} ${n.id === selectedId ? 'selected' : ''}" data-id="${n.id}" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼칩니다" ${DND(n.id)} ${DROP(n.id)}>
         ${GRIP}<span>${esc(n.title)}</span><span class="num">${num}</span>
         ${impSelect(n)}
         ${depth < MAX_DEPTH - 1 ? `<button class="addchild" title="하위 추가" onclick="event.stopPropagation();addNode(${n.id})">＋</button>` : ''}
@@ -1462,7 +1890,7 @@ function dirRowHTML({ n, num, depth }, i) {
   const closed = collapsed.has(n.id);
   return `
       <div class="dir-item ${depth ? 'child' : ''} ${depth === 0 && i > 0 ? 'dir-top' : ''} ${n.id === selectedId ? 'selected' : ''}"
-           data-id="${n.id}" style="margin-left:${depth * 22}px" onclick="select(${n.id})" ${DND(n.id)} ${DROP(n.id)}>
+           data-id="${n.id}" style="margin-left:${depth * 22}px" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼칩니다" ${DND(n.id)} ${DROP(n.id)}>
         ${kids.length
           ? `<button class="toggle" title="${closed ? '펼치기' : '접기'}"
                onclick="event.stopPropagation();toggleCollapse(${n.id})">${closed ? '▶' : '▼'}</button>`
@@ -1618,13 +2046,16 @@ async function saveField(id, field, value) {
 const commentCache = new Map();          // 노드별 코멘트. 작성·삭제할 때만 비운다
 function commentsHTML(list, nodeId) {
   return list.length ? list.map(c => `
-    <div style="border-bottom:1px solid #f0f0ec;padding:8px 0">
-      <div style="font-size:12px;color:#888">
-        <b style="color:#666">${esc(c.username)}</b> · ${new Date(c.created_at).toLocaleString()}
-        ${auth && auth.username === c.username
-          ? `<button class="mv" style="font-size:12px" title="삭제" onclick="deleteComment(${c.id},${nodeId})">✕</button>` : ''}
+    <div style="display:flex;gap:8px;border-bottom:1px solid #f0f0ec;padding:8px 0">
+      <span class="cmt-av">${avatarHTML(c.avatar, 26)}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;color:#888">
+          <b style="color:#666">${esc(c.username)}</b> · ${new Date(c.created_at).toLocaleString()}
+          ${auth && auth.username === c.username
+            ? `<button class="mv" style="font-size:12px" title="삭제" onclick="deleteComment(${c.id},${nodeId})">✕</button>` : ''}
+        </div>
+        <div style="font-size:14px;margin-top:2px;white-space:pre-wrap">${esc(c.content)}</div>
       </div>
-      <div style="font-size:14px;margin-top:2px;white-space:pre-wrap">${esc(c.content)}</div>
     </div>`).join('')
     : '<p style="color:#aaa;font-size:13px">아직 코멘트가 없습니다.</p>';
 }
@@ -1712,7 +2143,16 @@ function prdClickEdit(e) {
 // ---------- actions ----------
 function setTab(t) { tab = t; render(); }
 function setView(v) { view = v; render(); }
-function select(id) { selectedId = selectedId === id ? null : id; applySelection(); }
+let lastCardClick = { id: 0, at: 0 };
+function select(id) {
+  const now = Date.now();
+  if (lastCardClick.id === id && now - lastCardClick.at < 400) {   // 더블클릭 = 하위 전부 펼치기
+    lastCardClick = { id: 0, at: 0 };
+    return expandSubtree(id);
+  }
+  lastCardClick = { id, at: now };
+  selectedId = selectedId === id ? null : id; applySelection();
+}
 function closePanel() { selectedId = null; applySelection(); }
 // 선택만 바뀐 경우: 트리/목록 전체를 다시 만들지 않고 표시와 상세만 갱신한다
 function applySelection() {
@@ -1740,22 +2180,42 @@ function renderDirDetail() {
 }
 function toggleCollapse(id) { collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); render(); }
 const hasKids = id => childrenOf(id).length > 0;
-function collapseAll() { collapsed = new Set(nodes.filter(n => hasKids(n.id)).map(n => n.id)); render(); }
+const allParentIds = () => new Set(nodes.filter(n => hasKids(n.id)).map(n => n.id));
+function collapseAll() { collapsed = allParentIds(); render(); }
+// 더블클릭: 이 항목 아래를 끝까지 펼친다
+function expandSubtree(id) {
+  const walk = pid => childrenOf(pid).forEach(k => { collapsed.delete(k.id); walk(k.id); });
+  collapsed.delete(id); walk(id);
+  render();
+}
 function expandAll() { collapsed = new Set(); render(); }
 
 async function boot() {
+  if (auth) {                      // 저장된 세션의 등급을 새로 받아온다 (관리자 메뉴 표시 판단)
+    try {
+      const m = await api('/api/me');
+      profile = m;                 // 헤더 아이콘이 기본 아이콘으로 남지 않게 미리 채운다
+      auth = { ...auth, role: m.role };
+      localStorage.setItem('auth', JSON.stringify(auth));
+      renderAuth();
+    } catch (e) {
+      if (String(e.message) === '401') { auth = null; localStorage.removeItem('auth'); renderAuth(); }
+    }
+  }
   if (shareToken) {
     try {
       project = await api('/api/shared/' + shareToken);
       await openProjectData();
+      readViewParams();
     } catch (e) {
       // 링크가 만료·해제된 경우: 일반 화면으로 떨어뜨려 홈 버튼 등이 계속 동작하게 한다
       shareToken = null; invalidShare = true; project = null;
       history.replaceState(null, '', location.pathname);   // 쓸모없어진 share 파라미터 제거
       if (auth) await loadProjects();
     }
-  } else if (auth) {
-    await loadProjects();
+  } else {
+    if (auth) await loadProjects();
+    await applyRoute();
   }
   render();
 }
