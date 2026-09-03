@@ -5,7 +5,7 @@ PRD & 기능명세서 관리 서비스. Docker Compose 로 `frontend`(nginx + `i
 
 - 기능·API 목록: [`README.md`](README.md)
 - DB 구조: [`doc/ERD.md`](doc/ERD.md)
-- 문서 내용 작성 규칙: [`plugin/skills/prd-spec/SKILL.md`](plugin/skills/prd-spec/SKILL.md)
+- 문서 내용 작성 규칙: [`plugin/skills/olgae-planner/SKILL.md`](plugin/skills/olgae-planner/SKILL.md)
   — PRD·기능명세서 본문을 쓰거나 고칠 때(MCP 툴 사용 포함) 이 규칙을 따른다.
 
 ## DB 를 바꿀 때
@@ -23,7 +23,7 @@ PRD & 기능명세서 관리 서비스. Docker Compose 로 `frontend`(nginx + `i
    `docker compose exec -T db psql -U app -d app -c "\dt" -c "\d+ <테이블>"`
 
 본문 문법(용어 백틱·링크·이미지)이나 툴 구성을 바꾸면
-`plugin/skills/prd-spec/SKILL.md` 도 함께 고친다.
+`plugin/skills/olgae-planner/SKILL.md` 도 함께 고친다.
 
 FK 없이 본문 텍스트로만 이어지는 관계(이미지 `![](/api/images/<id>)`, 용어 `` `용어` ``)가 있다.
 관련 로직을 바꿀 때 함께 확인한다.

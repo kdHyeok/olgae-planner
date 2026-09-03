@@ -1,7 +1,7 @@
 """HTTP MCP 서버 — 배포 서버가 /mcp 로 함께 제공한다.
 
 사용자는 설치 없이 명령 한 줄로 등록한다:
-  claude mcp add --transport http prd-spec https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
+  claude mcp add --transport http olgae-planner https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
 
 인증은 요청마다 Authorization 헤더로 한다. 서버는 토큰을 저장하지 않으며,
 권한 판정은 main.py 의 기존 핸들러(opt_user / check_access / check_owner)를 그대로 재사용한다.
@@ -16,7 +16,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 import main
 
 server = MCPServer(
-    "prd-spec",
+    "olgae-planner",
     version="0.1.0",
     instructions=(
         "PRD 문서와 계층형 기능명세서를 읽고 고치는 툴이다. "

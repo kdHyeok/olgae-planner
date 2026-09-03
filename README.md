@@ -98,8 +98,8 @@ frontend (nginx :80 → 호스트 :3000)
 요구사항: Docker + Docker Compose v2 (그 외 아무것도 설치할 필요 없음)
 
 ```bash
-git clone <this-repo-url>
-cd <repo-dir>
+git clone https://github.com/kdHyeok/olgae-planner.git
+cd olgae-planner
 cp .env.example .env          # POSTGRES_PASSWORD 를 반드시 채운다
 docker compose up --build -d
 ```
@@ -187,13 +187,13 @@ docker compose up -d --build
 플러그인(마켓플레이스)으로 설치하는 방법이 기본이고, 아래 `claude mcp add` 는 플러그인 없이 MCP 만 붙일 때 씁니다.
 
 ```bash
-claude mcp add --transport http prd-spec https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
+claude mcp add --transport http olgae-planner https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
 ```
 
 Cursor·Claude Desktop 등은 같은 창의 JSON 을 설정 파일에 붙여 넣습니다.
 
 ```json
-{ "mcpServers": { "prd-spec": { "type": "http", "url": "https://<호스트>/mcp",
+{ "mcpServers": { "olgae-planner": { "type": "http", "url": "https://<호스트>/mcp",
   "headers": { "Authorization": "Bearer <세션토큰>" } } } }
 ```
 
@@ -215,19 +215,19 @@ Cursor·Claude Desktop 등은 같은 창의 JSON 을 설정 파일에 붙여 넣
 Claude Code 와 Codex 양쪽 매니페스트가 들어 있고, 토큰·주소는 환경변수로 받습니다.
 
 ```bash
-export PRDSPEC_URL=https://<호스트>/mcp
-export PRDSPEC_TOKEN=<세션 토큰>
-claude plugin marketplace add kdHyeok/prd-spec-demo   # 또는 클론한 저장소에서 ./
-claude plugin install prd-spec@prd-spec-demo
+export OLGAE_URL=https://<호스트>/mcp
+export OLGAE_TOKEN=<세션 토큰>
+claude plugin marketplace add kdHyeok/olgae-planner   # 또는 클론한 저장소에서 ./
+claude plugin install olgae-planner@olgae-planner
 ```
 
-이미 `claude mcp add prd-spec` 으로 수동 등록해 뒀다면 이름이 겹쳐 플러그인 설정이 가려집니다
-(`claude mcp remove prd-spec` 후 사용).
+이미 `claude mcp add olgae-planner` 으로 수동 등록해 뒀다면 이름이 겹쳐 플러그인 설정이 가려집니다
+(`claude mcp remove olgae-planner` 후 사용).
 
-스킬 `prd-spec` 에 담긴 규칙: 용어는 백틱으로 감싸 사전에 등록(코드·파일명에는 쓰지 않음),
+스킬 `olgae-planner` 에 담긴 규칙: 용어는 백틱으로 감싸 사전에 등록(코드·파일명에는 쓰지 않음),
 본문에 첨부된 URL 은 열어서 확인, **와이어프레임·유저플로우 등 산출물은 명세에 실제로 있는 내용만** 사용,
 큰 수정 전 `save_version`. 자세한 내용은 [plugin/README.md](plugin/README.md) 와
-[plugin/skills/prd-spec/SKILL.md](plugin/skills/prd-spec/SKILL.md) 를 보세요.
+[plugin/skills/olgae-planner/SKILL.md](plugin/skills/olgae-planner/SKILL.md) 를 보세요.
 
 ### 로컬 테스트
 
@@ -236,7 +236,7 @@ docker compose up -d --build
 # 토큰 발급
 curl -s -X POST http://localhost:3000/api/auth/login   -H "Content-Type: application/json" -d '{"username":"<계정>","password":"<비밀번호>"}'
 # 등록 (-s local: 내 기기에만 저장)
-claude mcp add --transport http prd-spec http://localhost:3000/mcp -s local   -H "Authorization: Bearer <위 토큰>"
+claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local   -H "Authorization: Bearer <위 토큰>"
 ```
 
 등록 뒤 Claude Code 를 재시작하고 `/mcp` 로 연결 상태를 확인합니다.
@@ -262,11 +262,11 @@ claude mcp add --transport http prd-spec http://localhost:3000/mcp -s local   -H
 ├── CLAUDE.md            # 작업 규칙 (DB 변경 시 doc/ERD.md 갱신 등)
 ├── doc/
 │   └── ERD.md           # DB 스키마 문서 (관계도 · 컬럼 · 키 · 삭제 규칙)
-├── plugin/              # Claude/Codex 플러그인 (MCP 연결 + prd-spec 스킬)
+├── plugin/              # Claude/Codex 플러그인 (MCP 연결 + olgae-planner 스킬)
 │   ├── .claude-plugin/plugin.json
 │   ├── .codex-plugin/plugin.json
 │   ├── .mcp.json
-│   └── skills/prd-spec/SKILL.md
+│   └── skills/olgae-planner/SKILL.md
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt

@@ -1048,7 +1048,7 @@ document.getElementById('termtip').addEventListener('mouseenter', keepTip);
 document.getElementById('termtip').addEventListener('mouseleave', () => { tipEl().hidden = true; });
 
 // ---------- 플러그인 설치 가이드 ----------
-const MARKETPLACE = 'kdHyeok/prd-spec-demo';   // .claude-plugin/marketplace.json 이 있는 저장소
+const MARKETPLACE = 'kdHyeok/olgae-planner';   // .claude-plugin/marketplace.json 이 있는 저장소
 let _blocks = {};
 function copyBlock(k) {
   copyText(_blocks[k]).then(ok => toast(ok ? '복사했습니다. 터미널에 붙여넣기 하세요.' : '복사 실패'));
@@ -1061,12 +1061,12 @@ const cmdBox = (key, text) => {
 
 function pluginGuideHTML() {
   const url = location.origin + '/mcp';
-  const bash = `export PRDSPEC_URL=${url}\nexport PRDSPEC_TOKEN=${auth.token}`;
-  const pwsh = `$env:PRDSPEC_URL = "${url}"\n$env:PRDSPEC_TOKEN = "${auth.token}"`;
-  const install = `claude plugin marketplace add ${MARKETPLACE}\nclaude plugin install prd-spec@${MARKETPLACE.split('/')[1]}`;
-  const mcpOnly = `claude mcp add --transport http prd-spec ${url} -H "Authorization: Bearer ${auth.token}"`;
+  const bash = `export OLGAE_URL=${url}\nexport OLGAE_TOKEN=${auth.token}`;
+  const pwsh = `$env:OLGAE_URL = "${url}"\n$env:OLGAE_TOKEN = "${auth.token}"`;
+  const install = `claude plugin marketplace add ${MARKETPLACE}\nclaude plugin install olgae-planner@${MARKETPLACE.split('/')[1]}`;
+  const mcpOnly = `claude mcp add --transport http olgae-planner ${url} -H "Authorization: Bearer ${auth.token}"`;
   const json = JSON.stringify({
-    mcpServers: { 'prd-spec': { type: 'http', url, headers: { Authorization: 'Bearer ' + auth.token } } }
+    mcpServers: { 'olgae-planner': { type: 'http', url, headers: { Authorization: 'Bearer ' + auth.token } } }
   }, null, 2);
 
   return `<h3 style="margin-bottom:6px">플러그인 설치</h3>
@@ -1082,13 +1082,13 @@ function pluginGuideHTML() {
     <b style="font-size:13px">2. 플러그인을 설치합니다 (Claude Code)</b>
     ${cmdBox('install', install)}
     <p class="hint" style="margin:-8px 0 14px">설치 후 Claude Code 를 재시작하고,
-      <code>/mcp</code> 에서 <code>plugin:prd-spec:prd-spec</code> 연결과
-      <code>/plugin</code> 에서 스킬 <code>prd-spec</code> 을 확인하세요.
+      <code>/mcp</code> 에서 <code>plugin:olgae-planner:olgae-planner</code> 연결과
+      <code>/plugin</code> 에서 스킬 <code>olgae-planner</code> 을 확인하세요.
       저장소를 클론해 뒀다면 <code>claude plugin marketplace add ./</code> 로도 등록됩니다.</p>
 
     <b style="font-size:13px">3. 플러그인 없이 MCP 만 붙이려면</b>
     <p class="hint" style="margin:4px 0 6px">Claude Code — 같은 이름을 수동 등록하면 플러그인 설정을 가리므로
-      둘 중 하나만 씁니다(<code>claude mcp remove prd-spec</code> 로 정리).</p>
+      둘 중 하나만 씁니다(<code>claude mcp remove olgae-planner</code> 로 정리).</p>
     ${cmdBox('mcpOnly', mcpOnly)}
     <p class="hint" style="margin:4px 0 6px">그 밖의 클라이언트(Cursor·Claude Desktop 등)는 설정 파일에 넣으세요.</p>
     ${cmdBox('json', json)}
