@@ -18,6 +18,15 @@
 - **사용자 / 코멘트**
   - 사용자 이름 + 비밀번호로 회원가입/로그인 (PBKDF2 해시, DB 세션 토큰 — 발급 30일 지난 세션은 기동 시 정리)
   - 로그인한 사용자는 각 기능 항목에 코멘트 작성 가능, 본인 코멘트만 삭제 가능
+  - **가입 승인제**: 첫 계정은 곧바로 관리자, 이후 가입은 `pending` 으로 대기하며 관리자 승인 후 로그인
+  - **로그인 시도 제한**: 같은 IP 에서 한 계정에 5회, 또는 한 IP 에서 총 20회 실패하면 잠김.
+    잠금이 반복될수록 **30초 → 1분 → 3분 → 5분 → 10분 → 30분** 으로 길어지고, 24시간 조용하면 처음으로 돌아감
+    (계정 이름만으로 잠그지 않아 남의 아이디를 잠글 수 없음. 성공·비밀번호 변경 시 해제)
+  - **등급별 프로젝트 한도**: `admin` 무제한 · `pro` 5개 · `member` 3개 · `guest` 1개
+  - **내 계정 창**: 헤더의 사용자 아이콘을 누르면 프로필 이미지 등록, 등급,
+    남은 프로젝트 수·이미지 용량 게이지, 비밀번호 변경이 한 창에 뜸
+  - **등급별 이미지 총량**: `admin` 무제한 · `pro` 500MB · `member` 200MB · `guest` 50MB
+    (한 장 5MB 상한은 그대로. 총량은 프로젝트 소유자 몫에서 차감되어, 공유 링크로 올려도 소유자 기준)
 - **이미지**
   - 기능 설명·PRD 편집 중 이미지 붙여넣기(Ctrl+V), 끌어놓기, `이미지 추가` 버튼 지원
   - 이미지는 DB(`images` 테이블)에 저장되고 `![](/api/images/<id>)` 마크다운으로 본문에 삽입됨
@@ -42,13 +51,29 @@
   - `[표시이름](https://...)` → 하이퍼링크
   - 주소만 적어도 자동 링크(`[url](url)` 과 동일). 스킴 없는 `localhost:3000/...`·`example.com/...` 도 인식
   - 링크는 항상 새 탭에서 열림. `javascript:`·`data:` 같은 주소는 링크로 만들지 않음
-- **버전 기록 (기능명세서)**
-  - 헤더 메뉴 → `기능명세서 버전 기록`에서 현재 트리 상태를 스냅샷으로 저장
+- **버전 기록 (PRD + 기능명세서)**
+  - 헤더의 **저장 아이콘**(용어 사전 옆) 한 번으로 현재 PRD와 기능 트리를 함께 스냅샷 저장
+  - 헤더 메뉴 → `버전 기록`에서 목록 확인 · 저장 · 복원
   - 목록에 **저장 일시 · 저장한 사용자 · 항목 수** 표시, `불러오기`로 그 시점으로 복원(두 번 클릭 확인)
-  - 복원 시 살아남는 항목은 id 를 유지해 해당 항목의 코멘트가 보존됨
+  - 복원하면 PRD 본문도 그 시점으로 되돌아감. 살아남는 항목은 id 를 유지해 해당 항목의 코멘트가 보존됨
+  - `prd` 컬럼 추가 이전에 저장된 버전은 컬럼이 생기는 기동 때의 PRD 로 채워짐
 - **내보내기**
   - 헤더 `⋯` 메뉴의 **마크다운으로 내보내기** → PRD + 기능명세서 전체를 `<프로젝트명>.md` 파일로 저장
   - 기능은 번호가 매겨진 헤딩(`### 1`, `#### 1.1`)과 상태·중요도 목록으로 출력, 이미지 주소는 절대경로로 변환
+- **관리자 페이지** (헤더 메뉴 → `관리자`, admin 등급만)
+  - 계정 목록: 등급 변경, 프로젝트 수/한도 확인, 비밀번호 변경(관리자 계정 포함), 계정 완전 삭제
+  - 계정별 프로젝트 목록에서 개별 프로젝트 삭제
+  - 신규 가입: 허용/차단 토글, 가입 신청 목록, 등급을 골라 승인, 거절
+  - 마지막 관리자 계정은 강등·삭제가 차단되고, 자기 계정은 삭제할 수 없음
+- **주소(라우팅)**
+  - `/` 내 프로젝트 · `/project/<id>` 프로젝트 · `/admin` 관리자
+  - 보고 있는 화면이 쿼리로 남습니다 — `?tab=spec`(기능명세서 탭) · `&view=dir`(디렉토리 뷰).
+    없으면 각각 PRD 탭 · 트리 뷰가 기본
+  - 공유 링크도 같은 규칙 — `/?share=<토큰>&tab=spec&view=dir`. 프로젝트 id 는 주소에 드러나지 않음
+  - 새로고침·뒤로 가기·주소 복사가 그대로 동작(뒤로 가기는 탭·뷰까지 되돌림)
+  - nginx 가 `try_files $uri /index.html` 로 모든 경로를 앱 셸로 넘깁니다(SPA)
+  - `/admin` 은 앱 셸만 공개되고 데이터는 없습니다. `robots.txt` 로 `Disallow`,
+    응답에 `X-Robots-Tag: noindex, nofollow` 를 붙여 색인을 막습니다
 - **프로젝트**
   - 사용자별로 여러 프로젝트 생성/이름 변경/삭제 (PRD와 기능 트리는 프로젝트 단위)
   - 프로젝트 소유자만 접근 가능. 소유자가 **공유 링크**(`/?share=<token>`)를 생성하면 링크를 아는 누구나 열람·편집 가능, 링크 해제 시 즉시 차단
@@ -75,13 +100,18 @@ frontend (nginx :80 → 호스트 :3000)
 ```bash
 git clone <this-repo-url>
 cd <repo-dir>
+cp .env.example .env          # POSTGRES_PASSWORD 를 반드시 채운다
 docker compose up --build -d
 ```
+
+`.env` 에 `POSTGRES_PASSWORD` 가 없으면 compose 가 기동을 거부합니다(기본 비밀번호를 쓰지 않도록).
+`.env` 는 git 에 올라가지 않습니다.
 
 브라우저에서 **http://localhost:3000** 접속. 끝.
 
 - 첫 기동 시 백엔드가 테이블을 만들고 샘플 PRD/기능 트리를 자동 시드합니다.
 - 데이터는 `dbdata` 볼륨에 저장되어 컨테이너를 재시작해도 유지됩니다.
+- **처음 가입한 계정이 관리자**가 됩니다. 그 뒤의 가입은 관리자 승인을 받아야 로그인됩니다.
 
 ### 운영 명령
 
@@ -99,7 +129,9 @@ docker compose up -d --build
 ### 포트/설정 변경
 
 - 서비스 포트: `docker-compose.yml`의 `frontend.ports`(`"3000:80"`) 수정
-- DB 접속 정보: `docker-compose.yml`의 `POSTGRES_*` 환경변수와 `backend.environment.DATABASE_URL`을 함께 수정
+- DB 계정/비밀번호: `.env` 의 `POSTGRES_USER`·`POSTGRES_PASSWORD`·`POSTGRES_DB`
+  (`DATABASE_URL` 은 compose 가 이 값들로 조립합니다. 기존 볼륨의 비밀번호는 최초 생성 시점에 정해지므로,
+  바꾸려면 `docker compose down -v` 로 초기화해야 합니다)
 
 ## API
 
@@ -121,14 +153,28 @@ docker compose up -d --build
 | PUT | `/api/terms/{tid}` | 용어 수정 (`{description?, category_id?, sort_order?}`) |
 | GET / POST | `/api/projects/{pid}/term-categories` | 카테고리 목록 / 추가 (`{name}`) |
 | DELETE | `/api/term-categories/{cid}` | 카테고리 삭제 (용어는 미분류로 남음) |
-| GET / POST | `/api/projects/{pid}/versions` | 버전 목록 / 현재 기능명세서 스냅샷 저장 (로그인 필요) |
-| POST | `/api/versions/{vid}/restore` | 해당 버전으로 복원 (로그인 필요) |
+| GET / POST | `/api/projects/{pid}/versions` | 버전 목록 / 현재 PRD + 기능명세서 스냅샷 저장 (로그인 필요) |
+| POST | `/api/versions/{vid}/restore` | 해당 버전으로 복원 — PRD 도 함께 (로그인 필요) |
 | DELETE | `/api/versions/{vid}` | 버전 삭제 — 소유자만 |
 | GET | `/api/projects/{pid}/images` | 앨범 목록 (`id, created_at, bytes, used`) |
 | POST | `/api/projects/{pid}/images/delete` | 선택 이미지 삭제 (`{ids: [...]}`) → `{deleted, bytes}` |
 | POST | `/api/auth/register` | 회원가입 (`{username, password}` → `{token, username}`) |
 | POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
 | POST | `/api/auth/logout` | 로그아웃 (Bearer 토큰) |
+| GET | `/api/me` | 내 등급·프로젝트 수·이미지 사용량과 한도·프로필 이미지 |
+| PUT | `/api/me/avatar` | 프로필 이미지 등록/삭제 (`{avatar}` data URL 또는 null) |
+| PUT | `/api/me/password` | 내 비밀번호 변경 (`{current, password}`, 새 토큰을 돌려줌) |
+| GET | `/api/signup-open` | 신규 가입 허용 여부 (공개) |
+| GET | `/api/admin/users` | 계정 목록 (등급·상태·프로젝트 수·이미지 사용량·한도) — admin |
+| PUT | `/api/admin/users/{uid}/role` | 등급 변경 (`{role}`) — admin |
+| PUT | `/api/admin/users/{uid}/password` | 비밀번호 변경 (세션·잠금 해제) — admin |
+| DELETE | `/api/admin/users/{uid}` | 계정 완전 삭제 (연관 데이터 CASCADE) — admin |
+| GET | `/api/admin/users/{uid}/projects` | 그 계정의 프로젝트 목록 — admin |
+| DELETE | `/api/admin/projects/{pid}` | 프로젝트 삭제 — admin |
+| GET | `/api/admin/signups` | 가입 신청 목록 — admin |
+| POST | `/api/admin/signups/{uid}/approve` | 승인 (`{role}`) — admin |
+| POST | `/api/admin/signups/{uid}/reject` | 거절(계정 삭제) — admin |
+| GET / PUT | `/api/admin/settings` | 가입 허용 여부 조회/변경 (`{signup_open}`) — admin |
 | GET | `/api/nodes/{id}/comments` | 노드 코멘트 목록 |
 | POST | `/api/nodes/{id}/comments` | 코멘트 작성 (로그인 필요, `Authorization: Bearer <token>`) |
 | DELETE | `/api/comments/{id}` | 본인 코멘트 삭제 (로그인 필요) |
@@ -137,13 +183,14 @@ docker compose up -d --build
 
 백엔드가 `/mcp` 에 HTTP MCP 엔드포인트를 함께 제공합니다. 사용자는 **설치 없이 명령 한 줄**로 등록합니다.
 
-앱에서 헤더 메뉴 → **MCP 연결** 을 열면 본인 토큰이 채워진 명령이 나오고 복사 버튼이 있습니다.
+앱에서 헤더 메뉴 → **플러그인 설치** 를 열면 본인 토큰이 채워진 명령이 나오고 복사 버튼이 있습니다.
+플러그인(마켓플레이스)으로 설치하는 방법이 기본이고, 아래 `claude mcp add` 는 플러그인 없이 MCP 만 붙일 때 씁니다.
 
 ```bash
 claude mcp add --transport http prd-spec https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
 ```
 
-Cursor·Claude Desktop 등은 같은 모달의 JSON 을 설정 파일에 붙여 넣습니다.
+Cursor·Claude Desktop 등은 같은 창의 JSON 을 설정 파일에 붙여 넣습니다.
 
 ```json
 { "mcpServers": { "prd-spec": { "type": "http", "url": "https://<호스트>/mcp",
@@ -236,4 +283,13 @@ DB 구조는 [`doc/ERD.md`](doc/ERD.md) 에 관계도와 컬럼 설명이 있습
 
 ## 주의
 
-데모 용도입니다. 인증/권한, HTTPS, DB 백업이 없으므로 외부 공개 환경에 그대로 두지 마세요.
+데모 용도입니다. 외부에 공개하려면 최소한 아래를 먼저 확인하세요.
+
+- `.env` 의 `POSTGRES_PASSWORD` 를 강한 값으로 (기본값 사용 금지)
+- 앞단에 HTTPS 종료(리버스 프록시) — 세션 토큰이 평문으로 흐르지 않게
+- 프록시를 더 앞에 둔다면 nginx 의 `X-Real-IP` 가 실제 클라이언트 IP 가 되게 맞출 것
+  (아니면 로그인 잠금이 프록시 IP 하나로 뭉쳐 모든 사용자가 함께 잠깁니다)
+- 신규 가입은 승인제를 유지하거나 관리자 페이지에서 차단
+- `MCP_ALLOWED_HOSTS` 에 배포 도메인 지정 (비우면 Host 검사가 꺼집니다)
+- 이미지는 URL 을 알면 인증 없이 열립니다 (`/api/images/<id>`, id 는 추측 불가)
+- DB 백업 없음

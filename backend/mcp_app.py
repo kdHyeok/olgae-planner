@@ -159,7 +159,7 @@ def set_term(term_id: int, ctx: Context, description: str | None = None,
 
 @server.tool()
 def save_version(project_id: int, ctx: Context) -> dict:
-    """현재 기능명세서 상태를 스냅샷으로 저장한다. 트리를 크게 고치기 전에 먼저 호출할 것."""
+    """현재 PRD 와 기능명세서를 함께 스냅샷으로 저장한다. 크게 고치기 전에 먼저 호출할 것."""
     return _wrap(main.save_version, project_id, user=_user(ctx))
 
 
@@ -171,7 +171,7 @@ def list_versions(project_id: int, ctx: Context) -> list[dict]:
 
 @server.tool()
 def restore_version(version_id: int, ctx: Context) -> dict:
-    """기능명세서를 해당 버전 시점으로 되돌린다. 그 뒤의 변경은 사라지므로 사용자 확인을 받고 호출할 것."""
+    """PRD 와 기능명세서를 해당 버전 시점으로 되돌린다. 그 뒤의 변경은 사라지므로 사용자 확인을 받고 호출할 것."""
     return _wrap(main.restore_version, version_id, user=_user(ctx))
 
 

@@ -25,6 +25,19 @@ app = FastAPI(lifespan=lifespan)
 
 PRD_TEMPLATE = "# PRD\n\n## 개요\n\n내용을 작성하세요.\n"
 
+# 등급별 프로젝트 개수 한도 (None = 무제한)
+ROLE_LIMITS = {"admin": None, "pro": 5, "member": 3, "guest": 1}
+LOGIN_MAX_FAILS = 5      # 같은 IP 에서 한 계정에 대한 연속 실패 허용 횟수
+LOGIN_IP_MAX_FAILS = 20  # 한 IP 에서의 총 실패 허용 횟수 (여러 계정 대입 방어)
+LOGIN_FAIL_WINDOW_MIN = 10       # 이 시간 안의 실패만 이어서 센다
+LOGIN_LOCK_STEPS = [30, 60, 180, 300, 600, 1800]   # 잠금이 반복될수록 길어진다(초)
+LOGIN_LOCK_RESET_H = 24          # 이만큼 조용하면 잠금 단계가 처음으로 돌아간다
+
+MAX_AVATAR_CHARS = 200_000       # 프로필 이미지(data URL) 길이 상한, 대략 150KB
+
+# 등급별 이미지 업로드 총량 (MB, None = 무제한). 프로젝트 소유자 기준으로 합산한다
+ROLE_UPLOAD_MB = {"admin": None, "pro": 500, "member": 200, "guest": 50}
+
 
 def init_db():
     with pool.connection() as conn, conn.cursor() as cur:
@@ -34,6 +47,27 @@ def init_db():
                 username text NOT NULL UNIQUE,
                 password text NOT NULL
             );
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS role   text NOT NULL DEFAULT 'guest';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+            CREATE TABLE IF NOT EXISTS settings (
+                key text PRIMARY KEY,
+                value text NOT NULL
+            );
+            -- 계정 이름만으로 잠그면 남의 아이디를 잠글 수 있어 IP 를 키에 함께 넣는다
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'login_attempts' AND column_name = 'username')
+                THEN DROP TABLE login_attempts; END IF;
+            END $$;
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                key text PRIMARY KEY,          -- 'u:<이름>@<IP>' 또는 'ip:<IP>'
+                fails int NOT NULL DEFAULT 0,
+                last_fail timestamptz NOT NULL DEFAULT now()
+            );
+            ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS locks int NOT NULL DEFAULT 0;
+            ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS locked_until timestamptz;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
             CREATE TABLE IF NOT EXISTS sessions (
                 token text PRIMARY KEY,
                 user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -69,6 +103,10 @@ def init_db():
                 created_at timestamptz NOT NULL DEFAULT now(),
                 data jsonb NOT NULL
             );
+            -- 버전에 PRD 도 함께 담는다. 이미 있던 버전은 지금의 PRD 로 한 번만 채운다
+            ALTER TABLE versions ADD COLUMN IF NOT EXISTS prd text;
+            UPDATE versions v SET prd = p.prd FROM projects p
+             WHERE p.id = v.project_id AND v.prd IS NULL;
             CREATE TABLE IF NOT EXISTS term_categories (
                 id serial PRIMARY KEY,
                 project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -133,8 +171,16 @@ def init_db():
             CREATE INDEX IF NOT EXISTS versions_project_id_idx ON versions (project_id);
             CREATE INDEX IF NOT EXISTS sessions_user_id_idx    ON sessions (user_id);
             CREATE INDEX IF NOT EXISTS projects_owner_id_idx   ON projects (owner_id);
+            CREATE INDEX IF NOT EXISTS users_status_idx         ON users (status);
+            INSERT INTO settings (key, value) VALUES ('signup_open', '1')
+                ON CONFLICT (key) DO NOTHING;
+            -- 최초 부트스트랩: 관리자가 없으면 가장 오래된 계정을 관리자로 올린다
+            UPDATE users SET role = 'admin', status = 'active'
+             WHERE id = (SELECT min(id) FROM users)
+               AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin');
             -- ponytail: 세션 만료는 기동 시 30일 지난 것만 지우는 방식. 요청마다 검사해야 하면 opt_user 에 조건 추가
             DELETE FROM sessions WHERE created_at < now() - interval '30 days';
+            DELETE FROM login_attempts WHERE last_fail < now() - interval '24 hours';
         """)
 
 
@@ -159,17 +205,102 @@ def opt_user(authorization: str | None = Header(None)) -> dict | None:
     if not authorization or not authorization.startswith("Bearer "):
         return None
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT u.id, u.username FROM sessions s
+        cur.execute("""SELECT u.id, u.username, u.role, u.status FROM sessions s
                        JOIN users u ON u.id = s.user_id WHERE s.token = %s""",
                     (authorization[7:],))
         row = cur.fetchone()
-    return {"id": row[0], "username": row[1]} if row else None
+    if not row or row[3] != "active":
+        return None                      # 대기·차단 계정의 세션은 통하지 않는다
+    return {"id": row[0], "username": row[1], "role": row[2]}
 
 
 def current_user(user: dict | None = Depends(opt_user)) -> dict:
     if not user:
         raise HTTPException(401, "로그인이 필요합니다")
     return user
+
+
+def admin_user(user: dict = Depends(current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자만 접근할 수 있습니다")
+    return user
+
+
+def get_setting(cur, key: str, default: str = "") -> str:
+    cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+    row = cur.fetchone()
+    return row[0] if row else default
+
+
+def project_count(cur, user_id: int) -> int:
+    cur.execute("SELECT count(*) FROM projects WHERE owner_id = %s", (user_id,))
+    return cur.fetchone()[0]
+
+
+def client_ip(request: Request) -> str:
+    """nginx 가 넣어 주는 X-Real-IP 를 쓴다 (클라이언트가 보낸 값은 nginx 가 덮어씀)."""
+    return (request.headers.get("x-real-ip")
+            or (request.client.host if request.client else "?"))
+
+
+def fail_keys(username: str, ip: str) -> tuple[str, str]:
+    return "u:%s@%s" % (username, ip), "ip:%s" % ip
+
+
+def fmt_dur(secs: int) -> str:
+    if secs < 60:
+        return "%d초" % secs
+    return "%d분" % (secs // 60) + (" %d초" % (secs % 60) if secs % 60 else "")
+
+
+def lock_left(cur, keys) -> int:
+    """잠겨 있으면 남은 초, 아니면 0."""
+    cur.execute("""SELECT max(ceil(extract(epoch from (locked_until - now()))))
+                   FROM login_attempts WHERE key = ANY(%s) AND locked_until > now()""",
+                (list(keys),))
+    return int(cur.fetchone()[0] or 0)
+
+
+def bump_login_fail(username: str, ip: str) -> tuple[int, int]:
+    """실패를 기록하고 (남은 시도, 이번에 걸린 잠금 초) 를 돌려준다.
+
+    예외를 던지기 전에 커밋돼야 하므로 별도 트랜잭션으로 처리한다.
+    잠금은 반복될수록 길어진다(LOGIN_LOCK_STEPS). 마지막 실패로부터
+    LOGIN_LOCK_RESET_H 가 지나면 단계가 처음으로 돌아간다.
+    """
+    left, locked = LOGIN_MAX_FAILS, 0
+    with pool.connection() as conn, conn.cursor() as cur:
+        for k, limit in zip(fail_keys(username, ip), (LOGIN_MAX_FAILS, LOGIN_IP_MAX_FAILS)):
+            cur.execute("""
+                INSERT INTO login_attempts (key, fails, last_fail) VALUES (%s, 1, now())
+                ON CONFLICT (key) DO UPDATE SET
+                    fails = CASE WHEN login_attempts.last_fail > now() - make_interval(mins => %s)
+                                 THEN login_attempts.fails + 1 ELSE 1 END,
+                    locks = CASE WHEN login_attempts.last_fail > now() - make_interval(hours => %s)
+                                 THEN login_attempts.locks ELSE 0 END,
+                    last_fail = now()
+                RETURNING fails, locks""",
+                (k, LOGIN_FAIL_WINDOW_MIN, LOGIN_LOCK_RESET_H))
+            fails, locks = cur.fetchone()
+            if k.startswith("u:"):
+                left = limit - fails
+            if fails >= limit:
+                secs = LOGIN_LOCK_STEPS[min(locks, len(LOGIN_LOCK_STEPS) - 1)]
+                cur.execute("""UPDATE login_attempts
+                                  SET fails = 0, locks = locks + 1,
+                                      locked_until = now() + make_interval(secs => %s)
+                                WHERE key = %s""", (secs, k))
+                locked = max(locked, secs)
+    return left, locked
+
+
+def upload_usage(cur, owner_id: int, role: str):
+    """소유자가 가진 모든 프로젝트의 이미지 총량(바이트)과 한도(바이트)."""
+    cur.execute("""SELECT coalesce(sum(length(i.data)), 0)
+                   FROM images i JOIN projects p ON p.id = i.project_id
+                   WHERE p.owner_id = %s""", (owner_id,))
+    mb = ROLE_UPLOAD_MB.get(role)
+    return cur.fetchone()[0], (None if mb is None else mb * 1024 * 1024)
 
 
 def check_access(cur, project_id: int, user: dict | None, share: str | None):
@@ -211,26 +342,108 @@ def make_session(cur, user_id: int) -> str:
 
 @app.post("/api/auth/register", status_code=201)
 def register(body: Credentials):
-    if not body.username.strip() or len(body.password) < 4:
+    """첫 계정은 곧바로 관리자, 그 뒤는 관리자 승인을 기다리는 대기 상태로 만든다."""
+    name = body.username.strip()
+    if not name or len(body.password) < 4:
         raise HTTPException(400, "사용자 이름과 4자 이상의 비밀번호가 필요합니다")
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM users WHERE username = %s", (body.username,))
+        cur.execute("SELECT count(*) FROM users")
+        first = cur.fetchone()[0] == 0
+        if not first and get_setting(cur, "signup_open", "1") != "1":
+            raise HTTPException(403, "지금은 신규 가입을 받지 않습니다. 관리자에게 문의하세요.")
+        cur.execute("SELECT 1 FROM users WHERE username = %s", (name,))
         if cur.fetchone():
             raise HTTPException(409, "이미 존재하는 사용자 이름입니다")
-        cur.execute("INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id",
-                    (body.username.strip(), hash_pw(body.password)))
-        return {"token": make_session(cur, cur.fetchone()[0]), "username": body.username.strip()}
+        role, status = ("admin", "active") if first else ("guest", "pending")
+        cur.execute("""INSERT INTO users (username, password, role, status)
+                       VALUES (%s, %s, %s, %s) RETURNING id""",
+                    (name, hash_pw(body.password), role, status))
+        uid = cur.fetchone()[0]
+        if status == "active":
+            return {"token": make_session(cur, uid), "username": name, "role": role}
+    return {"status": "pending", "username": name,
+            "message": "가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다."}
 
 
 @app.post("/api/auth/login")
-def login(body: Credentials):
+def login(body: Credentials, request: Request):
+    name = body.username.strip()
+    ip = client_ip(request)
+    ukey, ipkey = fail_keys(name, ip)
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, password FROM users WHERE username = %s", (body.username,))
-        row = cur.fetchone()
-        if not row or not secrets.compare_digest(
-                hash_pw(body.password, row[1].split("$")[0]), row[1]):
-            raise HTTPException(401, "사용자 이름 또는 비밀번호가 올바르지 않습니다")
-        return {"token": make_session(cur, row[0]), "username": body.username}
+        # 잠금 기준은 (계정+IP) 또는 (IP). 계정 이름만으로는 잠그지 않아 남을 잠글 수 없다
+        left_sec = lock_left(cur, (ukey, ipkey))
+        cur.execute("SELECT id, password, role, status FROM users WHERE username = %s", (name,))
+        u = cur.fetchone()
+
+    if left_sec:
+        raise HTTPException(429, "로그인 실패가 많아 이 위치에서 로그인이 제한됩니다."
+                                 f" {fmt_dur(left_sec)} 뒤에 다시 시도하세요.")
+    ok = bool(u) and secrets.compare_digest(
+        hash_pw(body.password, u[1].split("$")[0]), u[1])
+    if not ok:
+        left, locked = bump_login_fail(name, ip)
+        raise HTTPException(401, "사용자 이름 또는 비밀번호가 올바르지 않습니다"
+                                 + (f" — {fmt_dur(locked)}간 로그인이 제한됩니다" if locked
+                                    else f" (남은 시도 {left}회)"))
+    if u[3] == "pending":
+        raise HTTPException(403, "가입 승인 대기 중입니다. 관리자 승인 후 이용할 수 있습니다.")
+    if u[3] != "active":
+        raise HTTPException(403, "이 계정은 사용할 수 없습니다. 관리자에게 문의하세요.")
+
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM login_attempts WHERE key = ANY(%s)", ([ukey, ipkey],))
+        return {"token": make_session(cur, u[0]), "username": name, "role": u[2]}
+
+
+@app.get("/api/me")
+def me(user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        used = project_count(cur, user["id"])
+        up_used, up_limit = upload_usage(cur, user["id"], user["role"])
+        cur.execute("SELECT avatar FROM users WHERE id = %s", (user["id"],))
+        avatar = cur.fetchone()[0]
+    return {"username": user["username"], "role": user["role"],
+            "projects": used, "project_limit": ROLE_LIMITS.get(user["role"]),
+            "upload_bytes": up_used, "upload_limit": up_limit, "avatar": avatar}
+
+
+class AvatarIn(BaseModel):
+    avatar: str | None = None            # data URL. None 이면 삭제
+
+
+@app.put("/api/me/avatar", status_code=204)
+def set_avatar(body: AvatarIn, user: dict = Depends(current_user)):
+    """프로필 이미지. 프런트에서 128px 로 줄여 보내므로 users 행에 data URL 로 둔다."""
+    av = body.avatar or None
+    if av and not av.startswith("data:image/"):
+        raise HTTPException(400, "이미지 파일만 등록할 수 있습니다")
+    if av and len(av) > MAX_AVATAR_CHARS:
+        raise HTTPException(413, "프로필 이미지가 너무 큽니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE users SET avatar = %s WHERE id = %s", (av, user["id"]))
+
+
+class PasswordChange(BaseModel):
+    current: str
+    password: str
+
+
+@app.put("/api/me/password")
+def change_my_password(body: PasswordChange, user: dict = Depends(current_user)):
+    """현재 비밀번호를 확인하고 바꾼다. 다른 기기의 세션은 모두 끊고 새 토큰을 준다."""
+    if len(body.password) < 4:
+        raise HTTPException(400, "새 비밀번호는 4자 이상이어야 합니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT password FROM users WHERE id = %s", (user["id"],))
+        cur_hash = cur.fetchone()[0]
+        if not secrets.compare_digest(hash_pw(body.current, cur_hash.split("$")[0]), cur_hash):
+            raise HTTPException(403, "현재 비밀번호가 올바르지 않습니다")
+        cur.execute("UPDATE users SET password = %s WHERE id = %s",
+                    (hash_pw(body.password), user["id"]))
+        cur.execute("DELETE FROM sessions WHERE user_id = %s", (user["id"],))
+        return {"token": make_session(cur, user["id"]),
+                "username": user["username"], "role": user["role"]}
 
 
 @app.post("/api/auth/logout", status_code=204)
@@ -238,6 +451,173 @@ def logout(authorization: str | None = Header(None)):
     if authorization and authorization.startswith("Bearer "):
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM sessions WHERE token = %s", (authorization[7:],))
+
+
+# ---------- admin ----------
+class RoleIn(BaseModel):
+    role: str
+
+
+class PasswordIn(BaseModel):
+    password: str
+
+
+class SignupSwitch(BaseModel):
+    signup_open: bool
+
+
+def one_admin_left(cur, uid: int) -> bool:
+    """uid 가 마지막 남은 관리자인지 (강등·삭제로 관리자가 사라지는 것을 막는다)"""
+    cur.execute("SELECT count(*) FROM users WHERE role = 'admin' AND status = 'active'")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT role FROM users WHERE id = %s", (uid,))
+    row = cur.fetchone()
+    return bool(row) and row[0] == "admin" and total <= 1
+
+
+def with_limits(rows):
+    for r in rows:
+        r["project_limit"] = ROLE_LIMITS.get(r["role"])
+        mb = ROLE_UPLOAD_MB.get(r["role"])
+        r["upload_limit"] = None if mb is None else mb * 1024 * 1024
+    return rows
+
+
+@app.get("/api/admin/users")
+def admin_list_users(_: dict = Depends(admin_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT u.id, u.username, u.role, u.status, u.created_at,
+                              (SELECT count(*) FROM projects p WHERE p.owner_id = u.id) AS projects,
+                              (SELECT coalesce(sum(length(i.data)), 0)
+                                 FROM images i JOIN projects p2 ON p2.id = i.project_id
+                                WHERE p2.owner_id = u.id) AS upload_bytes
+                       FROM users u WHERE u.status <> 'pending' ORDER BY u.id""")
+        return with_limits(rows_to_dicts(cur))
+
+
+@app.get("/api/admin/signups")
+def admin_list_signups(_: dict = Depends(admin_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT id, username, created_at FROM users
+                       WHERE status = 'pending' ORDER BY created_at""")
+        return rows_to_dicts(cur)
+
+
+@app.post("/api/admin/signups/{uid}/approve")
+def admin_approve(uid: int, body: RoleIn, _: dict = Depends(admin_user)):
+    if body.role not in ROLE_LIMITS:
+        raise HTTPException(400, "등급이 올바르지 않습니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""UPDATE users SET status = 'active', role = %s
+                       WHERE id = %s AND status = 'pending' RETURNING username""",
+                    (body.role, uid))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "대기 중인 신청이 없습니다")
+        return {"username": row[0], "role": body.role}
+
+
+@app.post("/api/admin/signups/{uid}/reject", status_code=204)
+def admin_reject(uid: int, _: dict = Depends(admin_user)):
+    """거절은 계정을 지운다. 같은 이름으로 다시 신청할 수 있다."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM users WHERE id = %s AND status = 'pending'", (uid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "대기 중인 신청이 없습니다")
+
+
+@app.put("/api/admin/users/{uid}/role")
+def admin_set_role(uid: int, body: RoleIn, _: dict = Depends(admin_user)):
+    if body.role not in ROLE_LIMITS:
+        raise HTTPException(400, "등급이 올바르지 않습니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        if body.role != "admin" and one_admin_left(cur, uid):
+            raise HTTPException(400, "마지막 관리자 계정의 등급은 내릴 수 없습니다")
+        cur.execute("UPDATE users SET role = %s WHERE id = %s RETURNING username",
+                    (body.role, uid))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "계정을 찾을 수 없습니다")
+        return {"username": row[0], "role": body.role, "project_limit": ROLE_LIMITS[body.role]}
+
+
+@app.put("/api/admin/users/{uid}/password", status_code=204)
+def admin_set_password(uid: int, body: PasswordIn, _: dict = Depends(admin_user)):
+    """관리자 계정을 포함해 어떤 계정의 비밀번호도 바꾼다. 기존 세션은 모두 끊는다."""
+    if len(body.password) < 4:
+        raise HTTPException(400, "비밀번호는 4자 이상이어야 합니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT username FROM users WHERE id = %s", (uid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "계정을 찾을 수 없습니다")
+        cur.execute("UPDATE users SET password = %s WHERE id = %s",
+                    (hash_pw(body.password), uid))
+        cur.execute("DELETE FROM sessions WHERE user_id = %s", (uid,))
+        cur.execute("DELETE FROM login_attempts WHERE key LIKE %s", ("u:" + row[0] + "@%",))
+
+
+@app.delete("/api/admin/users/{uid}", status_code=204)
+def admin_delete_user(uid: int, admin: dict = Depends(admin_user)):
+    """계정과 그 계정의 프로젝트·이미지·코멘트까지 DB 에서 완전히 지운다 (FK CASCADE)."""
+    if uid == admin["id"]:
+        raise HTTPException(400, "자기 계정은 삭제할 수 없습니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        if one_admin_left(cur, uid):
+            raise HTTPException(400, "마지막 관리자 계정은 삭제할 수 없습니다")
+        cur.execute("DELETE FROM users WHERE id = %s", (uid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "계정을 찾을 수 없습니다")
+
+
+@app.get("/api/admin/users/{uid}/projects")
+def admin_user_projects(uid: int, _: dict = Depends(admin_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT username, role FROM users WHERE id = %s", (uid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "계정을 찾을 수 없습니다")
+        cur.execute("""SELECT p.id, p.name, p.share_token IS NOT NULL AS shared,
+                              (SELECT count(*) FROM nodes n WHERE n.project_id = p.id) AS nodes,
+                              (SELECT count(*) FROM images i WHERE i.project_id = p.id) AS images
+                       FROM projects p WHERE p.owner_id = %s ORDER BY p.id""", (uid,))
+        return {"username": row[0], "role": row[1], "project_limit": ROLE_LIMITS.get(row[1]),
+                "projects": rows_to_dicts(cur)}
+
+
+@app.delete("/api/admin/projects/{pid}", status_code=204)
+def admin_delete_project(pid: int, _: dict = Depends(admin_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM projects WHERE id = %s", (pid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "프로젝트를 찾을 수 없습니다")
+
+
+@app.get("/api/admin/settings")
+def admin_get_settings(_: dict = Depends(admin_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        return {"signup_open": get_setting(cur, "signup_open", "1") == "1",
+                "role_limits": ROLE_LIMITS, "upload_limits_mb": ROLE_UPLOAD_MB,
+                "login_max_fails": LOGIN_MAX_FAILS, "login_ip_max_fails": LOGIN_IP_MAX_FAILS,
+                "login_lock_steps": LOGIN_LOCK_STEPS}
+
+
+@app.put("/api/admin/settings")
+def admin_put_settings(body: SignupSwitch, _: dict = Depends(admin_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO settings (key, value) VALUES ('signup_open', %s)
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
+                    ("1" if body.signup_open else "0",))
+    return {"signup_open": body.signup_open}
+
+
+@app.get("/api/signup-open")
+def signup_open():
+    """로그인 화면에서 가입 버튼을 보여줄지 판단하는 공개 엔드포인트."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM users")
+        first = cur.fetchone()[0] == 0
+        return {"open": first or get_setting(cur, "signup_open", "1") == "1"}
 
 
 # ---------- projects ----------
@@ -258,6 +638,10 @@ def create_project(body: ProjectIn, user: dict = Depends(current_user)):
     if not body.name.strip():
         raise HTTPException(400, "이름이 필요합니다")
     with pool.connection() as conn, conn.cursor() as cur:
+        limit = ROLE_LIMITS.get(user["role"], 1)
+        if limit is not None and project_count(cur, user["id"]) >= limit:
+            raise HTTPException(403, f"{user['role']} 등급은 프로젝트를 최대 {limit}개까지"
+                                     " 만들 수 있습니다. 관리자에게 등급 상향을 요청하세요.")
         cur.execute("""INSERT INTO projects (owner_id, name, prd) VALUES (%s, %s, %s)
                        RETURNING id, name, share_token""",
                     (user["id"], body.name.strip(), PRD_TEMPLATE))
@@ -520,7 +904,7 @@ def delete_category(cid: int, share: str | None = None, user: dict | None = Depe
         cur.execute("DELETE FROM term_categories WHERE id = %s", (cid,))
 
 
-# ---------- versions (기능명세서 스냅샷) ----------
+# ---------- versions (PRD + 기능명세서 스냅샷) ----------
 NODE_FIELDS = ("id", "parent_id", "title", "description", "status", "importance", "sort_order")
 
 
@@ -531,9 +915,11 @@ def save_version(pid: int, share: str | None = None, user: dict = Depends(curren
         cur.execute(f"SELECT {', '.join(NODE_FIELDS)} FROM nodes WHERE project_id = %s"
                     " ORDER BY sort_order, id", (pid,))
         snapshot = rows_to_dicts(cur)
-        cur.execute("""INSERT INTO versions (project_id, user_id, username, data)
-                       VALUES (%s, %s, %s, %s) RETURNING id, created_at""",
-                    (pid, user["id"], user["username"], json.dumps(snapshot)))
+        cur.execute("SELECT prd FROM projects WHERE id = %s", (pid,))
+        prd = cur.fetchone()[0]
+        cur.execute("""INSERT INTO versions (project_id, user_id, username, data, prd)
+                       VALUES (%s, %s, %s, %s, %s) RETURNING id, created_at""",
+                    (pid, user["id"], user["username"], json.dumps(snapshot), prd))
         vid, created = cur.fetchone()
     return {"id": vid, "created_at": created, "username": user["username"],
             "node_count": len(snapshot)}
@@ -550,14 +936,16 @@ def list_versions(pid: int, share: str | None = None, user: dict | None = Depend
 
 @app.post("/api/versions/{vid}/restore")
 def restore_version(vid: int, share: str | None = None, user: dict = Depends(current_user)):
-    """스냅샷 상태로 되돌린다. 살아남는 항목은 id 를 유지해 코멘트가 보존된다."""
+    """PRD 와 기능 트리를 그 시점으로 되돌린다. 살아남는 항목은 id 를 유지해 코멘트가 보존된다."""
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT project_id, data FROM versions WHERE id = %s", (vid,))
+        cur.execute("SELECT project_id, data, prd FROM versions WHERE id = %s", (vid,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "버전을 찾을 수 없습니다")
-        pid, snapshot = row
+        pid, snapshot, prd = row
         check_access(cur, pid, user, share)
+        if prd is not None:
+            cur.execute("UPDATE projects SET prd = %s WHERE id = %s", (prd, pid))
 
         by_id = {n["id"]: n for n in snapshot}
         cur.execute("DELETE FROM nodes WHERE project_id = %s AND NOT (id = ANY(%s))",
@@ -615,6 +1003,17 @@ async def upload_image(pid: int, request: Request, share: str | None = None,
         raise HTTPException(413, "이미지는 5MB 이하만 올릴 수 있습니다")
     with pool.connection() as conn, conn.cursor() as cur:
         check_access(cur, pid, user, share)
+        # 총량은 프로젝트 소유자 기준 (공유 링크로 올려도 소유자 몫에서 차감된다)
+        cur.execute("""SELECT p.owner_id, u.role FROM projects p
+                       JOIN users u ON u.id = p.owner_id WHERE p.id = %s""", (pid,))
+        owner_id, owner_role = cur.fetchone()
+        up_used, up_limit = upload_usage(cur, owner_id, owner_role)
+        if up_limit is not None and up_used + len(data) > up_limit:
+            raise HTTPException(413,
+                "이미지 저장 용량을 초과했습니다"
+                " (%dMB / %dMB). 앨범에서 쓰지 않는 이미지를 지우거나"
+                " 관리자에게 등급 상향을 요청하세요."
+                % (up_used // (1024 * 1024), up_limit // (1024 * 1024)))
         img_id = secrets.token_urlsafe(16)
         cur.execute("INSERT INTO images (id, project_id, mime, data) VALUES (%s, %s, %s, %s)",
                     (img_id, pid, mime.split(";")[0], data))
@@ -677,7 +1076,7 @@ def list_comments(node_id: int, share: str | None = None,
                   user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
         check_access(cur, node_project(cur, node_id), user, share)
-        cur.execute("""SELECT c.id, c.node_id, u.username, c.content, c.created_at
+        cur.execute("""SELECT c.id, c.node_id, u.username, u.avatar, c.content, c.created_at
                        FROM comments c JOIN users u ON u.id = c.user_id
                        WHERE c.node_id = %s ORDER BY c.created_at""", (node_id,))
         return rows_to_dicts(cur)

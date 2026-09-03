@@ -5,7 +5,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 기동 시 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 맞춥니다.
 **DB 구조를 바꾸면 이 문서도 함께 고칩니다** (규칙은 [`CLAUDE.md`](../CLAUDE.md) 참고).
 
-- 테이블 9개
+- 테이블 11개
 - 모든 콘텐츠(기능 트리·PRD·이미지·용어·버전)는 **프로젝트(`projects`) 단위**로 소속됩니다.
 
 ## 관계도
@@ -31,6 +31,21 @@ erDiagram
         serial id PK "사용자 ID"
         text username UK "사용자 이름(고유)"
         text password "비밀번호 해시(salt$pbkdf2)"
+        text role "등급 admin·pro·member·guest"
+        text status "상태 active·pending(가입 승인 대기)"
+        timestamptz created_at "가입 신청 시각"
+        text avatar "프로필 이미지(data URL)"
+    }
+    settings {
+        text key PK "설정 키 (signup_open)"
+        text value "설정 값 (1·0)"
+    }
+    login_attempts {
+        text key PK "잠금 키 u:이름@IP 또는 ip:IP"
+        int fails "연속 실패 횟수"
+        int locks "잠긴 횟수(잠금 시간 단계)"
+        timestamptz locked_until "잠금 해제 시각"
+        timestamptz last_fail "마지막 실패 시각"
     }
     sessions {
         text token PK "세션 토큰"
@@ -68,6 +83,7 @@ erDiagram
         text username "저장 당시 사용자 이름"
         timestamptz created_at "저장 시각"
         jsonb data "기능 트리 스냅샷"
+        text prd "그 시점의 PRD 본문"
     }
     term_categories {
         serial id PK "카테고리 ID"
@@ -116,6 +132,32 @@ erDiagram
 | `id` | 사용자 ID | serial | PK | 자동 증가 | |
 | `username` | 사용자 이름 | text | UK, NN | | 로그인 ID |
 | `password` | 비밀번호 해시 | text | NN | | `salt$hash` 형식(PBKDF2-SHA256, 10만 회). 원문 저장 안 함 |
+| `role` | 등급 | text | NN | `'member'` | `admin`(무제한·관리자 페이지) · `pro`(5) · `member`(3) · `guest`(1). 프로젝트 수와 이미지 총량 한도를 정함 |
+| `status` | 상태 | text | NN | `'pending'` | `active` 로그인 가능 · `pending` 가입 승인 대기. 첫 계정만 곧바로 `admin`/`active` |
+| `created_at` | 가입 신청 시각 | timestamptz | NN | `now()` | 가입 신청 목록 정렬 기준 |
+| `avatar` | 프로필 이미지 | text | | | 128px 정사각형 data URL. 프런트에서 줄여 보내며 상한 200,000자 |
+
+### settings — 서비스 설정
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `key` | 설정 키 | text | PK | | 현재 `signup_open` 하나 |
+| `value` | 설정 값 | text | NN | | `1` 가입 허용 · `0` 차단 |
+
+### login_attempts — 로그인 실패 기록
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `key` | 잠금 키 | text | PK | | `u:<이름>@<IP>` (그 IP 에서 그 계정) 또는 `ip:<IP>` (그 IP 전체) |
+| `fails` | 연속 실패 횟수 | int | NN | `0` | 10분 안의 실패만 이어서 셈. 잠글 때 0 으로 되돌림 |
+| `locks` | 잠긴 횟수 | int | NN | `0` | 잠금 시간 단계. 24시간 조용하면 0 으로 되돌림 |
+| `locked_until` | 잠금 해제 시각 | timestamptz | | | 이 시각까지 로그인을 막음 |
+| `last_fail` | 마지막 실패 시각 | timestamptz | NN | `now()` | 위 두 초기화 판단 기준 |
+
+계정 이름만으로 잠그면 남의 아이디를 잠글 수 있어 **IP 를 키에 함께** 넣습니다.
+`u:` 키가 5회, `ip:` 키가 20회를 넘으면 잠그고, **반복될수록 잠금이 길어집니다** —
+30초 → 1분 → 3분 → 5분 → 10분 → 30분(이후 유지). IP 는 nginx 가 넣는 `X-Real-IP` 를 씁니다.
+로그인 성공·비밀번호 변경 시 해당 키를 지우고, 기동 시 24시간 지난 행을 정리합니다.
 
 ### sessions — 로그인 세션
 
@@ -162,7 +204,7 @@ erDiagram
 | `content` | 내용 | text | NN | | |
 | `created_at` | 작성 시각 | timestamptz | NN | `now()` | |
 
-### versions — 기능명세서 버전(스냅샷)
+### versions — PRD + 기능명세서 버전(스냅샷)
 
 | 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
 |---|---|---|---|---|---|
@@ -171,9 +213,13 @@ erDiagram
 | `user_id` | 저장한 사용자 | int | FK → users(id) SET NULL | | 사용자가 삭제되면 NULL |
 | `username` | 저장 당시 이름 | text | NN | | 사용자 삭제 후에도 표시하기 위해 복사해 둠 |
 | `created_at` | 저장 시각 | timestamptz | NN | `now()` | |
-| `data` | 스냅샷 | jsonb | NN | | `nodes` 행 배열(`id, parent_id, title, description, status, importance, sort_order`) |
+| `data` | 기능 트리 스냅샷 | jsonb | NN | | `nodes` 행 배열(`id, parent_id, title, description, status, importance, sort_order`) |
+| `prd` | PRD 스냅샷 | text | | | 그 시점의 `projects.prd` 본문 |
 
-복원 시 살아 있는 항목은 `id` 를 유지(UPSERT)하여 코멘트가 보존됩니다.
+복원 시 살아 있는 항목은 `id` 를 유지(UPSERT)하여 코멘트가 보존되고, `projects.prd` 는 스냅샷으로 덮어씁니다.
+
+`prd` 는 나중에 추가한 컬럼이라 NULL 을 허용합니다. `prd` 열이 없던 시절의 버전은
+컬럼을 추가하는 기동 때 **그 시점의 현재 PRD** 로 한 번 채워집니다(`UPDATE … WHERE prd IS NULL`, 멱등).
 
 ### term_categories — 용어 카테고리
 
@@ -204,7 +250,7 @@ erDiagram
 | `id` | 이미지 ID | text | PK | | URL-safe 난수 토큰. `/api/images/<id>` 로 서빙 |
 | `project_id` | 소속 프로젝트 | int | FK → projects(id) CASCADE, NN | | |
 | `mime` | MIME 타입 | text | NN | | `image/png` 등 |
-| `data` | 바이너리 | bytea | NN | | 파일시스템이 아닌 DB 에 저장. 업로드 상한 5MB |
+| `data` | 바이너리 | bytea | NN | | 파일시스템이 아닌 DB 에 저장. 한 장 5MB, 계정 총량은 등급별(`admin` 무제한 · `pro` 500MB · `member` 200MB · `guest` 50MB) |
 | `created_at` | 업로드 시각 | timestamptz | NN | `now()` | 앨범의 날짜 구분 기준 |
 
 본문은 이미지를 `![](/api/images/<id>)` **문자열로만** 참조하므로 FK 가 없습니다.
