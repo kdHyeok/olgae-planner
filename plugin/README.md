@@ -31,11 +31,24 @@ $env:PRDSPEC_TOKEN = "<세션 토큰>"
 
 ```bash
 claude plugin marketplace add kdHyeok/prd-spec-demo
-claude plugin install prd-spec
+claude plugin install prd-spec@prd-spec-demo
 ```
 
-로컬 저장소에서 바로 쓰려면 `/plugin` 메뉴에서 이 `plugin/` 디렉토리를 추가한다.
-연결 확인은 `/mcp`, 스킬 확인은 `/prd-spec`.
+마켓플레이스 목록은 저장소 루트의 `.claude-plugin/marketplace.json` 이다.
+저장소를 클론해 뒀다면 그 경로로 바로 등록할 수 있다 (`.` 은 안 되고 `./` 형태로 준다).
+
+```bash
+claude plugin marketplace add ./          # 클론한 저장소 루트에서
+claude plugin install prd-spec@prd-spec-demo
+```
+
+등록 뒤 Claude Code 를 재시작하고 `/mcp` 로 연결(`plugin:prd-spec:prd-spec`),
+`/plugin` 으로 스킬 `prd-spec` 을 확인한다.
+
+> `claude mcp add` 로 같은 이름(`prd-spec`)을 이미 등록해 뒀다면 그쪽이 플러그인 설정을 가린다.
+> 플러그인 쪽을 쓰려면 수동 등록을 지운다: `claude mcp remove prd-spec`.
+> 목록에 `Connected` 로 떠도 토큰 검사는 통과한 게 아니다(연결 단계에는 인증이 필요 없다).
+> 실제 권한은 툴을 한 번 호출해 봐야 알 수 있다.
 
 ## Codex
 

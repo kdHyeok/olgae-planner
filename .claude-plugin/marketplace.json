@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "prd-spec-demo",
+  "owner": { "name": "kdHyeok" },
+  "metadata": {
+    "description": "PRD & 기능명세서 서비스의 MCP + 작성 규칙 플러그인"
+  },
+  "plugins": [
+    {
+      "name": "prd-spec",
+      "source": "./plugin",
+      "description": "배포된 PRD & 기능명세서 서비스를 MCP 로 읽고 고치고, 본문 작성 규칙(용어 백틱·링크·명세 근거)을 따르게 한다."
+    }
+  ]
+}
