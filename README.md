@@ -170,9 +170,12 @@ Claude Code 와 Codex 양쪽 매니페스트가 들어 있고, 토큰·주소는
 ```bash
 export PRDSPEC_URL=https://<호스트>/mcp
 export PRDSPEC_TOKEN=<세션 토큰>
-claude plugin marketplace add kdHyeok/prd-spec-demo
-claude plugin install prd-spec
+claude plugin marketplace add kdHyeok/prd-spec-demo   # 또는 클론한 저장소에서 ./
+claude plugin install prd-spec@prd-spec-demo
 ```
+
+이미 `claude mcp add prd-spec` 으로 수동 등록해 뒀다면 이름이 겹쳐 플러그인 설정이 가려집니다
+(`claude mcp remove prd-spec` 후 사용).
 
 스킬 `prd-spec` 에 담긴 규칙: 용어는 백틱으로 감싸 사전에 등록(코드·파일명에는 쓰지 않음),
 본문에 첨부된 URL 은 열어서 확인, **와이어프레임·유저플로우 등 산출물은 명세에 실제로 있는 내용만** 사용,
