@@ -1,11 +1,11 @@
 {
-  "name": "prd-spec",
+  "name": "olgae-planner",
   "version": "0.1.0",
   "description": "PRD·기능명세서 서비스 연동 — 명세를 읽고 고치는 MCP 툴과, 용어 백틱 표기·링크·첨부 확인·명세에 있는 내용만 쓰는 산출물 규칙",
   "author": {
     "name": "kdHyeok"
   },
-  "repository": "https://github.com/kdHyeok/prd-spec-demo",
+  "repository": "https://github.com/kdHyeok/olgae-planner",
   "license": "MIT",
   "keywords": [
     "prd",
@@ -19,11 +19,11 @@
     "./skills/"
   ],
   "mcpServers": {
-    "prd-spec": {
+    "olgae-planner": {
       "type": "http",
-      "url": "${PRDSPEC_URL:-http://localhost:3000/mcp}",
+      "url": "${OLGAE_URL:-http://localhost:3000/mcp}",
       "headers": {
-        "Authorization": "Bearer ${PRDSPEC_TOKEN}"
+        "Authorization": "Bearer ${OLGAE_TOKEN}"
       }
     }
   }

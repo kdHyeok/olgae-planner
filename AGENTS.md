@@ -7,6 +7,6 @@
 바꾼 뒤 같은 작업 안에서 그 문서를 갱신한다 (상세 절차는 `CLAUDE.md`).
 
 PRD·기능명세서 **내용을 쓰거나 고칠 때**(MCP 툴 사용 포함)는
-[`plugin/skills/prd-spec/SKILL.md`](plugin/skills/prd-spec/SKILL.md) 의 작성 규칙을 따른다.
+[`plugin/skills/olgae-planner/SKILL.md`](plugin/skills/olgae-planner/SKILL.md) 의 작성 규칙을 따른다.
 
 지침이 바뀌면 `CLAUDE.md` 만 고친다. 이 파일에 규칙을 복사해 두지 않는다.
