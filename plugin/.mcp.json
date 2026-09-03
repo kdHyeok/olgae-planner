@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "prd-spec": {
+      "type": "http",
+      "url": "${PRDSPEC_URL:-http://localhost:3000/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${PRDSPEC_TOKEN}"
+      }
+    }
+  }
+}

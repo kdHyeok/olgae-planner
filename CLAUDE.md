@@ -5,6 +5,8 @@ PRD & 기능명세서 관리 서비스. Docker Compose 로 `frontend`(nginx + `i
 
 - 기능·API 목록: [`README.md`](README.md)
 - DB 구조: [`doc/ERD.md`](doc/ERD.md)
+- 문서 내용 작성 규칙: [`plugin/skills/prd-spec/SKILL.md`](plugin/skills/prd-spec/SKILL.md)
+  — PRD·기능명세서 본문을 쓰거나 고칠 때(MCP 툴 사용 포함) 이 규칙을 따른다.
 
 ## DB 를 바꿀 때
 
@@ -16,8 +18,12 @@ PRD & 기능명세서 관리 서비스. Docker Compose 로 `frontend`(nginx + `i
    관계도 · 삭제 규칙 · 테이블 상세 표 · 문자열 참조 · 인덱스. 새 컬럼에는 한글 이름을 붙이고,
    행(데이터) 값은 적지 않는다. API 필드가 바뀌면 `README.md` 의 API 표와
    `backend/mcp_app.py`(핸들러를 재사용하는 /mcp MCP 서버)도 함께 확인한다.
+
 4. 실제 DB 와 문서가 맞는지 확인한다:
    `docker compose exec -T db psql -U app -d app -c "\dt" -c "\d+ <테이블>"`
+
+본문 문법(용어 백틱·링크·이미지)이나 툴 구성을 바꾸면
+`plugin/skills/prd-spec/SKILL.md` 도 함께 고친다.
 
 FK 없이 본문 텍스트로만 이어지는 관계(이미지 `![](/api/images/<id>)`, 용어 `` `용어` ``)가 있다.
 관련 로직을 바꿀 때 함께 확인한다.
