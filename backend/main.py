@@ -199,7 +199,7 @@ def node_project(cur, node_id: int) -> int:
     cur.execute("SELECT project_id FROM nodes WHERE id = %s", (node_id,))
     row = cur.fetchone()
     if not row:
-        raise HTTPException(404, "not found")
+        raise HTTPException(404, "기능 항목을 찾을 수 없습니다")
     return row[0]
 
 
@@ -662,7 +662,7 @@ def get_image(img_id: str):
         cur.execute("SELECT mime, data FROM images WHERE id = %s", (img_id,))
         row = cur.fetchone()
     if not row:
-        raise HTTPException(404, "not found")
+        raise HTTPException(404, "이미지를 찾을 수 없습니다")
     return Response(content=bytes(row[1]), media_type=row[0],
                     headers={"Cache-Control": "public, max-age=31536000"})
 
