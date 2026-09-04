@@ -118,6 +118,10 @@
   #modal[hidden] { display: none; }
   .modal-box { background: #fff; border-radius: 12px; width: min(880px, 94vw);
     max-width: 92vw; max-height: 80vh; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+  .modal-box.account-modal { width: min(540px, 92vw); }
+  .account-row { display: flex; gap: 7px; margin-top: 8px; }
+  .account-row .inline-edit { min-width: 0; padding: 6px 8px; }
+  .account-row .btn { flex: 0 0 84px; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
   .modal-body { padding: 24px 26px; max-height: 80vh; overflow: auto; }
   .vrow { display: flex; align-items: center; gap: 8px; padding: 11px 0; border-bottom: 1px solid #f0f0ec; }
   /* ---- 관리자 페이지 ---- */
@@ -453,10 +457,10 @@ function renderAuth() {
   const el = document.getElementById('authbox');
   el.innerHTML = auth
     ? `<button class="btn ibtn avatar-btn" onclick="toggleProfile()" title="내 계정" aria-label="내 계정">${avatarHTML(profile && profile.avatar, 28)}</button>
-       <span style="font-size:14px;color:#555"><b>${esc(auth.username)}</b> 님</span>
+       <span style="font-size:14px;color:#555"><b>${esc(auth.display_name || auth.username)}</b> 님</span>
        ${profileOpen ? profileMenuHTML() : ''}
        <button class="btn danger ibtn" onclick="doLogout()" title="로그아웃" aria-label="로그아웃"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/></svg></button>`
-    : `<input type="text" id="au-id" placeholder="사용자 이름" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px">
+    : `<input type="text" id="au-id" placeholder="아이디" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px">
        <input type="password" id="au-pw" placeholder="비밀번호" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px"
          onkeydown="if(event.key==='Enter')doLogin()">
        <button class="btn primary" onclick="doLogin()">로그인</button>
@@ -494,7 +498,8 @@ function profileMenuHTML() {
         <input type="file" accept="image/*" hidden onchange="pickAvatar(this)">
       </label>
       <div style="min-width:0">
-        <div style="font-weight:600;font-size:14px;margin-bottom:4px">${esc(m.username)}</div>
+        <div style="font-weight:600;font-size:14px;margin-bottom:4px">${esc(m.display_name)}</div>
+        <div style="font-size:12px;color:#999;margin-bottom:4px">${esc(m.login_id)}</div>
         <span class="badge">${ROLE_LABEL[m.role] || m.role}</span>
       </div>
     </div>
@@ -502,7 +507,10 @@ function profileMenuHTML() {
       m.avatar ? ' <a href="#" onclick="return removeAvatar()">지우기</a>' : ''}</p>
     ${gaugeHTML('프로젝트', m.projects, m.project_limit, n => n + '개')}
     ${gaugeHTML('이미지 용량', m.upload_bytes, m.upload_limit, MB)}
-    <button class="btn" style="width:100%;margin-top:13px" onclick="pwModal()">비밀번호 변경</button>
+    <div style="display:flex;gap:8px;margin-top:13px">
+      <button class="btn" style="flex:1" onclick="nameModal()">이름 변경</button>
+      <button class="btn" style="flex:1" onclick="pwModal()">비밀번호 변경</button>
+    </div>
   </div>`;
 }
 
@@ -550,13 +558,36 @@ function removeAvatar() {
   return false;
 }
 
+function nameModal() {
+  profileOpen = false; renderAuth();
+  showModal(() => `<h3 style="margin-bottom:12px">이름 변경</h3>
+    <input class="inline-edit" id="my-display-name" placeholder="표시할 이름"
+      onkeydown="if(event.key==='Enter')changeDisplayName()">
+    <div class="btnrow"><button class="btn primary" onclick="changeDisplayName()">변경</button>
+      <button class="btn" onclick="closeModal()">취소</button></div>`);
+  const input = document.getElementById('my-display-name');
+  input.value = profile.display_name;
+  input.select();
+}
+async function changeDisplayName() {
+  const displayName = document.getElementById('my-display-name').value.trim();
+  if (!displayName) return toast('이름을 입력하세요.');
+  try {
+    const r = await api('/api/me/display-name', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: displayName }) });
+    auth.display_name = profile.display_name = r.display_name;
+    localStorage.setItem('auth', JSON.stringify(auth));
+    closeModal(); renderAuth(); toast('이름을 변경했습니다.');
+  } catch (e) { toast(e.detail || '변경 실패'); }
+}
+
 function pwModal() {
   profileOpen = false; renderAuth();
   showModal(() => `<h3 style="margin-bottom:6px">비밀번호 변경</h3>
     <p class="hint" style="margin:0 0 12px">바꾸면 다른 기기의 로그인은 모두 끊기고,
       이 브라우저만 그대로 이어집니다.</p>
     <input class="inline-edit" id="my-pw-cur" type="password" placeholder="현재 비밀번호">
-    <input class="inline-edit" id="my-pw-new" type="password" placeholder="새 비밀번호 (4자 이상)"
+    <input class="inline-edit" id="my-pw-new" type="password" minlength="8" placeholder="새 비밀번호 (8자 이상)"
       style="margin-top:8px" onkeydown="if(event.key==='Enter')document.getElementById('my-pw-new2').focus()">
     <input class="inline-edit" id="my-pw-new2" type="password" placeholder="새 비밀번호 확인"
       style="margin-top:8px" onkeydown="if(event.key==='Enter')changeMyPassword()">
@@ -566,6 +597,7 @@ function pwModal() {
 }
 async function changeMyPassword() {
   const pw = document.getElementById('my-pw-new').value;
+  if (pw.length < 8) return toast('새 비밀번호는 8자 이상이어야 합니다.');
   if (pw !== document.getElementById('my-pw-new2').value) return toast('새 비밀번호가 서로 다릅니다.');
   try {
     const r = await api('/api/me/password', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -585,13 +617,41 @@ function setAuth(a) {
 async function doLogin() {
   try {
     setAuth(await api('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
+      body: JSON.stringify({ login_id: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
   } catch (e) { toast(e.detail || '로그인 실패'); }
 }
-async function doRegister() {
+function doRegister() {
+  showModal(() => `<h3 style="margin-bottom:10px">회원가입</h3>
+    <input class="inline-edit" id="reg-id" placeholder="아이디" onblur="checkLoginId()">
+    <div id="reg-id-msg" class="hint" style="height:18px;margin:3px 0 5px"></div>
+    <input class="inline-edit" id="reg-name" placeholder="표시 이름">
+    <input class="inline-edit" id="reg-pw" type="password" minlength="8" placeholder="비밀번호 (8자 이상)"
+      style="margin-top:8px" onkeydown="if(event.key==='Enter')submitRegister()">
+    <p class="hint" style="margin:6px 0 0">아이디는 로그인에 사용하며, 표시 이름은 다른 사용자에게 보입니다.</p>
+    <div class="btnrow"><button class="btn primary" onclick="submitRegister()">가입 신청</button>
+      <button class="btn" onclick="closeModal()">취소</button></div>`);
+  setTimeout(() => document.getElementById('reg-id')?.focus(), 50);
+}
+async function checkLoginId() {
+  const id = document.getElementById('reg-id').value.trim();
+  const msg = document.getElementById('reg-id-msg');
+  if (!id) { msg.textContent = '아이디를 입력하세요.'; msg.style.color = '#c0392b'; return false; }
+  try {
+    const r = await api('/api/auth/id-available?login_id=' + encodeURIComponent(id));
+    msg.textContent = r.available ? '사용할 수 있는 아이디입니다.' : '이미 사용 중인 아이디입니다.';
+    msg.style.color = r.available ? '#4a7a4a' : '#c0392b';
+    return r.available;
+  } catch (e) { msg.textContent = e.detail || '중복 확인 실패'; msg.style.color = '#c0392b'; return false; }
+}
+async function submitRegister() {
+  const loginId = document.getElementById('reg-id').value.trim();
+  const displayName = document.getElementById('reg-name').value.trim();
+  const password = document.getElementById('reg-pw').value;
+  if (!loginId || !displayName) return toast('아이디와 표시 이름을 입력하세요.');
+  if (password.length < 8) return toast('비밀번호는 8자 이상이어야 합니다.');
   try {
     const r = await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) });
+      body: JSON.stringify({ login_id: loginId, display_name: displayName, password }) });
     if (r.status === 'pending') {          // 관리자 승인을 기다리는 상태
       showModal(() => `<h3 style="margin-bottom:10px">가입 신청 완료</h3>
         <p class="hint" style="margin:0 0 14px;line-height:1.8">${esc(r.message)}<br>
@@ -599,7 +659,7 @@ async function doRegister() {
         <div class="btnrow"><button class="btn primary" onclick="closeModal()">확인</button></div>`);
       return;
     }
-    setAuth(r);
+    closeModal(); setAuth(r);
   } catch (e) { toast(e.detail || '회원가입 실패'); }
 }
 async function doLogout() {
@@ -874,12 +934,14 @@ function termRow(t, group) {
         ${termCats.map(c => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
       </select>
     </td>
-    <td class="gdesc" title="더블클릭하여 수정" ondblclick="editTermDesc(this,${t.id})">${
+    <td class="gdesc" title="더블클릭하여 수정" ondblclick="editTermText(this,${t.id},'description')">${
       md(t.description) || '<span style="color:#bbb">클릭하여 설명 작성</span>'}
       <div class="guse">${[
         ...(t.in_prd ? [`<button class="btn goto" onclick="gotoPrd()">PRD</button>`] : []),
         ...(t.nodes || []).map(n => `<button class="btn goto" onclick="gotoNode(${n.id})">${esc(n.title)}</button>`)
       ].join('') || '<span style="color:#ccc;font-size:11px">사용처 없음</span>'}</div></td>
+    <td class="gdesc" title="더블클릭하여 수정" ondblclick="editTermText(this,${t.id},'note')">${
+      md(t.note) || '<span style="color:#bbb">클릭하여 비고 작성</span>'}</td>
     <td style="white-space:nowrap;text-align:right">
       <button class="mv" title="위로" ${i === 0 ? 'disabled' : ''} onclick="moveTerm(${t.id},-1)">▲</button>
       <button class="mv" title="아래로" ${i === group.items.length - 1 ? 'disabled' : ''} onclick="moveTerm(${t.id},1)">▼</button>
@@ -889,7 +951,7 @@ function termRow(t, group) {
 function glossaryHTML() {
   const groups = termGroups();
   const table = g => `<table class="gtable">
-    <thead><tr><th style="width:120px">용어</th><th style="width:110px">카테고리</th><th>설명</th><th style="width:52px"></th></tr></thead>
+    <thead><tr><th style="width:120px">용어</th><th style="width:110px">카테고리</th><th>설명</th><th style="width:180px">비고</th><th style="width:52px"></th></tr></thead>
     <tbody>${g.items.map(t => termRow(t, g)).join('')}</tbody></table>`;
   return `<h3 style="margin-bottom:6px">용어 사전</h3>
     <p class="hint" style="margin:0 0 12px">본문에서 <code>&#96;용어&#96;</code> 처럼 백틱으로 감싸면 자동으로 등록되고,
@@ -1052,26 +1114,27 @@ async function openGlossary() {
   await loadTerms();
   showModal(glossaryHTML);
 }
-function editTermDesc(el, id) {
+function editTermText(el, id, field) {
   if (!needEdit()) return;
   const t = terms.find(x => x.id === id);
   if (!t) return;
+  const label = field === 'note' ? '비고' : '설명';
   const box = document.createElement('textarea');
   box.className = 'inline-edit';
   box.style.minHeight = '110px';
-  box.value = t.description;
+  box.value = t[field];
   el.replaceWith(box);
   box.focus();
   let done = false;
   const finish = async save => {
     if (done) return;
     done = true;
-    if (save && box.value !== t.description) {
+    if (save && box.value !== t[field]) {
       try {
         const r = await api('/api/terms/' + id, { method: 'PUT',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: box.value }) });
-        t.description = r.description;
-      } catch (e) { toast(e.detail || '설명 저장 실패'); }
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: box.value }) });
+        t[field] = r[field];
+      } catch (e) { toast(e.detail || label + ' 저장 실패'); }
     }
     paintModal();
   };
@@ -1172,7 +1235,7 @@ function pluginGuideHTML() {
   return `<h3 style="margin-bottom:6px">플러그인 설치</h3>
     <p class="hint" style="margin:0 0 14px">AI 에이전트가 이 서비스의 PRD·기능명세서를 직접 읽고 고칠 수 있습니다.
       플러그인에는 <b>MCP 연결</b>과 <b>본문 작성 규칙 스킬</b>이 함께 들어 있습니다.
-      <b>${esc(auth.username)}</b> 님이 만든 프로젝트와 <b>멤버로 참여중인 프로젝트</b>가 모두 보이고,
+      <b>${esc(auth.display_name)}</b> 님이 만든 프로젝트와 <b>멤버로 참여중인 프로젝트</b>가 모두 보이고,
       할 수 있는 일은 화면에서와 똑같이 프로젝트별 권한을 따릅니다.</p>
 
     <b style="font-size:13px">1. 토큰을 발급합니다</b>
@@ -1226,7 +1289,7 @@ function pluginGuideHTML() {
     <p class="hint" style="margin:4px 0 6px">그 밖의 클라이언트(Cursor·Claude Desktop 등)는 설정 파일에 넣으세요.</p>
     ${cmdBox('json', json)}
 
-    <p class="hint" style="margin:12px 0 0">토큰은 <b>${esc(auth.username)}</b> 님으로 행동하는 열쇠입니다.
+    <p class="hint" style="margin:12px 0 0">토큰은 <b>${esc(auth.display_name)}</b> 님으로 행동하는 열쇠입니다.
       가진 사람은 회원님 권한 안에서 프로젝트를 읽고 고칠 수 있으니 공유하지 마세요.
       유출됐다면 위 목록에서 지우면 즉시 끊깁니다.</p>
     <p class="hint" style="margin:6px 0 0">쓸 수 있는 툴 13개: 프로젝트 목록 · 명세 조회 · PRD 저장 ·
@@ -1288,29 +1351,66 @@ async function admSetRole(uid, role) {
     await loadAdmin(); toast('등급을 변경했습니다.');
   } catch (e) { toast(e.detail || '등급 변경 실패'); await loadAdmin(); }
 }
+function admAccountModal(uid) {
+  const user = admin.users.find(u => u.id === uid);
+  if (!user) return;
+  showModal(() => `<h3 style="margin-bottom:12px">계정 정보</h3>
+    <div class="account-row" style="margin-top:0"><input class="inline-edit" id="adm-login-id" placeholder="로그인 아이디">
+      <button class="btn" onclick="admSetLoginId(${uid})">ID 변경</button></div>
+    <div class="account-row"><input class="inline-edit" id="adm-display-name" placeholder="표시할 이름">
+      <button class="btn" onclick="admSetDisplayName(${uid})">이름 변경</button></div>
+    <div class="account-row"><input class="inline-edit" id="adm-password" type="password" minlength="8"
+      placeholder="새 비밀번호 (8자 이상)" onkeydown="if(event.key==='Enter')admSetPassword(${uid})">
+      <button class="btn" onclick="admSetPassword(${uid})">비밀번호 변경</button></div>
+    <p class="hint" style="margin:6px 0 0">비밀번호를 바꾸면 해당 계정의 로그인과 플러그인 토큰이 해제됩니다.</p>
+    <div class="btnrow"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+  document.getElementById('adm-login-id').value = user.login_id;
+  document.getElementById('adm-display-name').value = user.display_name;
+  document.querySelector('#modal .modal-box').classList.add('account-modal');
+  document.getElementById('adm-login-id').select();
+}
+async function admSetLoginId(uid) {
+  const loginId = document.getElementById('adm-login-id').value.trim();
+  if (!loginId) return toast('아이디를 입력하세요.');
+  try {
+    const r = await api(`/api/admin/users/${uid}/login-id`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login_id: loginId }) });
+    const user = admin.users.find(u => u.id === uid); if (user) user.login_id = r.login_id;
+    if (uid === auth.id) {
+      auth.login_id = r.login_id; if (profile) profile.login_id = r.login_id; localStorage.setItem('auth', JSON.stringify(auth));
+    }
+    toast('아이디를 변경했습니다.');
+  } catch (e) { toast(e.detail || '변경 실패'); }
+}
+async function admSetDisplayName(uid) {
+  const displayName = document.getElementById('adm-display-name').value.trim();
+  if (!displayName) return toast('이름을 입력하세요.');
+  try {
+    const r = await api(`/api/admin/users/${uid}/display-name`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: displayName }) });
+    const user = admin.users.find(u => u.id === uid); if (user) user.display_name = r.display_name;
+    if (uid === auth.id) {
+      auth.display_name = r.display_name; if (profile) profile.display_name = r.display_name; localStorage.setItem('auth', JSON.stringify(auth));
+      renderAuth();
+    }
+    toast('이름을 변경했습니다.');
+  } catch (e) { toast(e.detail || '변경 실패'); }
+}
+async function admSetPassword(uid) {
+  const password = document.getElementById('adm-password').value;
+  if (password.length < 8) return toast('비밀번호는 8자 이상이어야 합니다.');
+  try {
+    await api(`/api/admin/users/${uid}/password`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }) });
+    if (uid === auth.id) { await doLogout(); toast('비밀번호를 변경했습니다. 다시 로그인하세요.'); }
+    else { document.getElementById('adm-password').value = ''; toast('비밀번호를 변경했습니다.'); }
+  } catch (e) { toast(e.detail || '변경 실패'); }
+}
 async function admDeleteUser(uid) {
   try {
     await api('/api/admin/users/' + uid, { method: 'DELETE' });
     await loadAdmin(); toast('계정과 그 계정의 모든 데이터를 삭제했습니다.');
   } catch (e) { toast(e.detail || '삭제 실패'); }
-}
-function admPasswordModal(uid, username) {
-  showModal(() => `<h3 style="margin-bottom:6px">비밀번호 변경 — ${esc(username)}</h3>
-    <p class="hint" style="margin:0 0 12px">변경하면 이 계정의 로그인 세션이 모두 끊기고,
-      로그인 잠금도 함께 풀립니다.</p>
-    <input class="inline-edit" id="adm-pw" type="password" placeholder="새 비밀번호 (4자 이상)"
-      onkeydown="if(event.key==='Enter')admSetPassword(${uid})">
-    <div class="btnrow"><button class="btn primary" onclick="admSetPassword(${uid})">변경</button>
-      <button class="btn" onclick="closeModal()">취소</button></div>`);
-  setTimeout(() => document.getElementById('adm-pw')?.focus(), 50);
-}
-async function admSetPassword(uid) {
-  const pw = document.getElementById('adm-pw').value;
-  try {
-    await api(`/api/admin/users/${uid}/password`, { method: 'PUT',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) });
-    closeModal(); toast('비밀번호를 변경했습니다.');
-  } catch (e) { toast(e.detail || '변경 실패'); }
 }
 async function admProjects(uid) {
   try {
@@ -1371,7 +1471,7 @@ function renderAdmin(c) {
       ${admin.signups.length ? `<table>
         <tr><th>사용자</th><th>신청 시각</th><th>승인 등급</th><th></th></tr>
         ${admin.signups.map(u => `<tr>
-          <td><b>${esc(u.username)}</b></td>
+          <td><b>${esc(u.display_name)}</b><br><span class="hint">${esc(u.login_id)}</span></td>
           <td>${new Date(u.created_at).toLocaleString()}</td>
           <td><select class="rolesel" id="apr-${u.id}">${roleOptions('guest')}</select></td>
           <td style="text-align:right;white-space:nowrap">
@@ -1386,14 +1486,15 @@ function renderAdmin(c) {
       <table>
         <tr><th>사용자</th><th>등급</th><th>프로젝트</th><th>이미지 용량</th><th>가입</th><th></th></tr>
         ${admin.users.map(u => `<tr>
-          <td><b>${esc(u.username)}</b>${u.username === auth.username ? ' <span class="pill">나</span>' : ''}</td>
+          <td><b>${esc(u.display_name)}</b>${u.login_id === auth.login_id ? ' <span class="pill">나</span>' : ''}
+            <br><span class="hint">${esc(u.login_id)}</span></td>
           <td><select class="rolesel" onchange="admSetRole(${u.id}, this.value)">${roleOptions(u.role)}</select></td>
           <td>${u.projects} / ${limitText(u)}</td>
           <td>${usageText(u)}</td>
           <td>${new Date(u.created_at).toLocaleDateString()}</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn" onclick="admProjects(${u.id})">프로젝트</button>
-            <button class="btn" onclick="admPasswordModal(${u.id}, '${esc(u.username)}')">비밀번호</button>
+            <button class="btn" onclick="admAccountModal(${u.id})">계정 정보</button>
             <button class="btn danger" onclick="twoStep('admuser:${u.id}', () => admDeleteUser(${u.id}))">${askLabel('admuser:' + u.id, '완전 삭제')}</button>
           </td></tr>`).join('')}
       </table>
@@ -2289,7 +2390,7 @@ function commentsHTML(list, nodeId) {
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;color:#888">
           <b style="color:#666">${esc(c.username)}</b> · ${new Date(c.created_at).toLocaleString()}
-          ${auth && auth.username === c.username
+          ${auth && auth.id === c.user_id
             ? `<button class="mv" style="font-size:12px" title="삭제" onclick="deleteComment(${c.id},${nodeId})">✕</button>` : ''}
         </div>
         <div style="font-size:14px;margin-top:2px;white-space:pre-wrap">${esc(c.content)}</div>
@@ -2438,7 +2539,7 @@ async function boot() {
     try {
       const m = await api('/api/me');
       profile = m;                 // 헤더 아이콘이 기본 아이콘으로 남지 않게 미리 채운다
-      auth = { ...auth, role: m.role };
+      auth = { ...auth, id: m.id, login_id: m.login_id, display_name: m.display_name, role: m.role };
       localStorage.setItem('auth', JSON.stringify(auth));
       renderAuth();
     } catch (e) {
