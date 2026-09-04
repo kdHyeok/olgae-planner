@@ -5,7 +5,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 기동 시 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 맞춥니다.
 **DB 구조를 바꾸면 이 문서도 함께 고칩니다** (규칙은 [`CLAUDE.md`](../CLAUDE.md) 참고).
 
-- 테이블 13개
+- 테이블 17개
 - 모든 콘텐츠(기능 트리·PRD·이미지·용어·버전)는 **프로젝트(`projects`) 단위**로 소속됩니다.
 
 ## 관계도
@@ -13,9 +13,14 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 ```mermaid
 erDiagram
     users ||--o{ sessions : "user_id · 로그인 세션"
+    users ||--o{ oauth_codes : "user_id · 승인한 사용자"
+    users ||--o{ oauth_tokens : "user_id · 연결 계정"
     users |o--o{ projects : "owner_id · 소유자"
     users ||--o{ comments : "user_id · 작성자"
     users |o--o{ versions : "user_id · 저장한 사람"
+    oauth_clients ||--o{ oauth_requests : "client_id · 승인 요청"
+    oauth_clients ||--o{ oauth_codes : "client_id · 인증 코드"
+    oauth_clients ||--o{ oauth_tokens : "client_id · 발급 토큰"
 
     projects ||--o{ nodes : "project_id"
     projects ||--o{ versions : "project_id"
@@ -50,6 +55,45 @@ erDiagram
         serial id UK "목록·삭제용 번호"
         int user_id FK "소유 계정"
         text name "토큰 이름"
+        timestamptz created_at "발급 시각"
+        timestamptz last_used_at "마지막 사용 시각"
+    }
+    oauth_clients {
+        text client_id PK "동적 등록 클라이언트 ID"
+        jsonb client_info "DCR 클라이언트 메타데이터"
+        timestamptz created_at "등록 시각"
+    }
+    oauth_requests {
+        text request_hash PK "승인 요청 토큰 해시"
+        text client_id FK "OAuth 클라이언트"
+        text state "클라이언트 상태값"
+        jsonb scopes "요청 scope"
+        text code_challenge "PKCE S256 challenge"
+        text redirect_uri "허용된 callback"
+        boolean redirect_uri_provided_explicitly "callback 명시 여부"
+        text resource "MCP audience"
+        timestamptz expires_at "만료 시각"
+    }
+    oauth_codes {
+        text code_hash PK "인증 코드 해시"
+        text client_id FK "OAuth 클라이언트"
+        int user_id FK "승인 사용자"
+        jsonb scopes "승인 scope"
+        text code_challenge "PKCE S256 challenge"
+        text redirect_uri "callback"
+        boolean redirect_uri_provided_explicitly "callback 명시 여부"
+        text resource "MCP audience"
+        timestamptz expires_at "만료 시각"
+    }
+    oauth_tokens {
+        text access_token_hash PK "access token 해시"
+        text refresh_token_hash UK "refresh token 해시"
+        text client_id FK "OAuth 클라이언트"
+        int user_id FK "연결 사용자"
+        jsonb scopes "발급 scope"
+        text resource "MCP audience"
+        timestamptz access_expires_at "access 만료"
+        timestamptz refresh_expires_at "refresh 만료"
         timestamptz created_at "발급 시각"
         timestamptz last_used_at "마지막 사용 시각"
     }
@@ -133,7 +177,8 @@ erDiagram
 
 | 부모를 지우면 | 자식은 |
 |---|---|
-| `users` → `sessions`, `projects`, `comments` | **함께 삭제** (CASCADE) |
+| `users` → `sessions`, `oauth_codes`, `oauth_tokens`, `projects`, `comments` | **함께 삭제** (CASCADE) |
+| `oauth_clients` → `oauth_requests`, `oauth_codes`, `oauth_tokens` | **함께 삭제** (CASCADE) |
 | `users` → `versions.user_id` | **NULL 로 바뀜** (SET NULL) — 기록은 `username` 으로 남음 |
 | `projects` → `nodes`, `versions`, `terms`, `term_categories`, `images` | **함께 삭제** (CASCADE) |
 | `nodes` → 하위 `nodes` | **함께 삭제** (CASCADE) — 부모를 지우면 하위 트리 전체가 사라짐 |
@@ -191,9 +236,64 @@ erDiagram
 | `created_at` | 발급 시각 | timestamptz | NN | `now()` | |
 | `last_used_at` | 마지막 사용 | timestamptz | | | 요청마다 쓰지 않고 **한 시간에 한 번만** 갱신 |
 
-`opt_user()` 가 `Bearer` 값의 접두어를 보고 `api_tokens`(olg_…) 와 `sessions` 중 어디를 볼지 고릅니다.
+`opt_user()` 가 `Bearer` 값의 접두어를 보고 `api_tokens`(olg_…), `oauth_tokens`(olgo_…),
+`sessions` 중 어디를 볼지 고릅니다.
 브라우저 로그아웃은 `sessions` 만 지우므로 플러그인은 계속 동작하고,
 관리자 비밀번호 재설정은 두 테이블을 함께 지웁니다.
+
+### oauth_clients — OAuth 동적 클라이언트
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `client_id` | 클라이언트 ID | text | PK | | DCR 시 MCP SDK가 생성. 연결이 유지되는 동안 재사용 |
+| `client_info` | 클라이언트 정보 | jsonb | NN | | callback·이름·grant·인증 방식. `none` 공개 클라이언트만 허용 |
+| `created_at` | 등록 시각 | timestamptz | NN | `now()` | |
+
+### oauth_requests — OAuth 로그인 승인 요청
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `request_hash` | 승인 요청 해시 | text | PK | | 원문은 브라우저에만 전달하고 DB에는 SHA-256 해시 저장 |
+| `client_id` | 클라이언트 | text | FK → oauth_clients(client_id) CASCADE, NN | | |
+| `state` | 상태값 | text | | | callback 시 클라이언트에 그대로 반환 |
+| `scopes` | 요청 권한 | jsonb | NN | | 현재 `mcp` 하나 |
+| `code_challenge` | PKCE 챌린지 | text | NN | | S256만 허용 |
+| `redirect_uri` | callback 주소 | text | NN | | DCR에 등록된 주소와 정확히 일치 |
+| `redirect_uri_provided_explicitly` | callback 명시 여부 | boolean | NN | | 토큰 교환 시 동일 주소 검증에 사용 |
+| `resource` | 보호 리소스 | text | NN | | `PUBLIC_URL/mcp`; 토큰 audience로 이어짐 |
+| `expires_at` | 만료 시각 | timestamptz | NN | | 10분 |
+
+### oauth_codes — 일회용 인증 코드
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `code_hash` | 인증 코드 해시 | text | PK | | 원문 저장 안 함. 교환 성공 시 즉시 삭제 |
+| `client_id` | 클라이언트 | text | FK → oauth_clients(client_id) CASCADE, NN | | |
+| `user_id` | 승인 사용자 | int | FK → users(id) CASCADE, NN | | |
+| `scopes` | 승인 권한 | jsonb | NN | | |
+| `code_challenge` | PKCE 챌린지 | text | NN | | token 요청의 verifier와 S256 비교 |
+| `redirect_uri` | callback 주소 | text | NN | | |
+| `redirect_uri_provided_explicitly` | callback 명시 여부 | boolean | NN | | |
+| `resource` | 보호 리소스 | text | NN | | |
+| `expires_at` | 만료 시각 | timestamptz | NN | | 5분 |
+
+### oauth_tokens — OAuth access·refresh 토큰
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `access_token_hash` | 액세스 토큰 해시 | text | PK | | `olgo_` 원문 대신 SHA-256 해시 저장 |
+| `refresh_token_hash` | 갱신 토큰 해시 | text | UK, NN | | `olgr_` 원문 대신 SHA-256 해시 저장 |
+| `client_id` | 클라이언트 | text | FK → oauth_clients(client_id) CASCADE, NN | | |
+| `user_id` | 연결 사용자 | int | FK → users(id) CASCADE, NN | | |
+| `scopes` | 발급 권한 | jsonb | NN | | 요청마다 `mcp` scope 확인 |
+| `resource` | 보호 리소스 | text | NN | | 요청마다 현재 `PUBLIC_URL/mcp`와 비교 |
+| `access_expires_at` | 액세스 만료 | timestamptz | NN | | 발급 후 1시간 |
+| `refresh_expires_at` | 갱신 만료 | timestamptz | NN | | 발급 후 30일. 갱신 시 access·refresh 모두 회전 |
+| `created_at` | 발급 시각 | timestamptz | NN | `now()` | |
+| `last_used_at` | 마지막 사용 | timestamptz | | | 한 시간에 한 번만 갱신 |
+
+OAuth 로그인은 기존 `users.login_id`·비밀번호와 `login_attempts` 잠금 정책을 그대로 사용합니다.
+비밀번호 변경·관리자 재설정·계정 삭제 시 해당 사용자의 미사용 인증 코드와 OAuth 토큰도 폐기됩니다.
 
 ### settings — 서비스 설정
 
@@ -340,7 +440,8 @@ PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습�
 | `comments_node_id_idx`, `comments_user_id_idx` | 항목별 코멘트 |
 | `images_project_id_idx`, `terms_project_id_idx`, `terms_category_id_idx`, `term_categories_project_id_idx`, `versions_project_id_idx` | 프로젝트별 목록 |
 | `users_login_id_idx` | 로그인 ID 중복 방지 |
-| `sessions_user_id_idx`, `projects_owner_id_idx` | 사용자 삭제 시 연쇄 |
+| `sessions_user_id_idx`, `projects_owner_id_idx`, `oauth_codes_user_id_idx`, `oauth_tokens_user_id_idx` | 사용자 삭제 시 연쇄 |
+| `oauth_requests_client_id_idx`, `oauth_codes_client_id_idx`, `oauth_tokens_client_id_idx` | OAuth 클라이언트 삭제 시 연쇄 |
 
 ## 레거시 정리 이력
 

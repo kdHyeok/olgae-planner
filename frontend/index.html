@@ -1192,8 +1192,7 @@ const cmdBox = (key, text) => {
     <button class="btn" onclick="copyBlock('${key}')">복사</button></div>`;
 };
 
-// 플러그인·MCP 는 브라우저 세션이 아니라 계정별 API 토큰(olg_…)으로 붙는다.
-// 로그아웃해도 살아 있어야 하기 때문이다
+// Claude/Codex 플러그인은 계정별 API 토큰, ChatGPT 연결은 OAuth를 쓴다.
 let ptok = { list: [], fresh: null };
 let guideShell = 'bash', guideClient = 'claude';
 
@@ -1238,6 +1237,14 @@ function pluginGuideHTML() {
       <b>${esc(auth.display_name)}</b> 님이 만든 프로젝트와 <b>멤버로 참여중인 프로젝트</b>가 모두 보이고,
       할 수 있는 일은 화면에서와 똑같이 프로젝트별 권한을 따릅니다.</p>
 
+    <b style="font-size:13px">ChatGPT에서 연결 (OAuth 2.1)</b>
+    <p class="hint" style="margin:4px 0 6px">ChatGPT의 새 플러그인에서 아래 주소를 <b>서버 URL</b>로 넣고
+      인증은 <b>OAuth</b>를 선택하세요. 처음 툴을 사용할 때 이 서비스의 로그인·승인 화면이 열립니다.
+      이 방식은 아래의 <code>olg_</code> 토큰을 직접 입력하지 않습니다.</p>
+    ${cmdBox('chatgptUrl', url)}
+
+    <b style="font-size:13px">Claude Code·Codex 플러그인</b>
+    <p class="hint" style="margin:4px 0 10px">아래 1~3단계는 터미널에서 플러그인을 설치할 때 사용합니다.</p>
     <b style="font-size:13px">1. 토큰을 발급합니다</b>
     <p class="hint" style="margin:4px 0 8px">계정 전용 토큰이라 <b>로그아웃해도 계속 씁니다</b>
       (브라우저 로그인 세션과 별개입니다).</p>

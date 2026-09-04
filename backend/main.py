@@ -1,4 +1,5 @@
 import hashlib
+import html
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from psycopg.errors import UniqueViolation
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
@@ -34,6 +36,10 @@ LOGIN_FAIL_WINDOW_MIN = 10       # 이 시간 안의 실패만 이어서 센다
 LOGIN_LOCK_STEPS = [30, 60, 180, 300, 600, 1800]   # 잠금이 반복될수록 길어진다(초)
 LOGIN_LOCK_RESET_H = 24          # 이만큼 조용하면 잠금 단계가 처음으로 돌아간다
 PASSWORD_MIN = 8
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://prd.donhse.duckdns.org").rstrip("/")
+OAUTH_RESOURCE = PUBLIC_URL + "/mcp"
+OAUTH_SCOPE = "mcp"
+OAUTH_ACCESS_PREFIX = "olgo_"
 
 MAX_AVATAR_CHARS = 200_000       # 프로필 이미지(data URL) 길이 상한, 대략 150KB
 # data URL 은 base64 가 아니어도 되므로(`data:image/png,<임의 텍스트>`) 형식을 못 박는다.
@@ -79,6 +85,45 @@ def init_db():
                 token text PRIMARY KEY,
                 user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 name text NOT NULL DEFAULT '플러그인',
+                created_at timestamptz NOT NULL DEFAULT now(),
+                last_used_at timestamptz
+            );
+            CREATE TABLE IF NOT EXISTS oauth_clients (
+                client_id text PRIMARY KEY,
+                client_info jsonb NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS oauth_requests (
+                request_hash text PRIMARY KEY,
+                client_id text NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+                state text,
+                scopes jsonb NOT NULL,
+                code_challenge text NOT NULL,
+                redirect_uri text NOT NULL,
+                redirect_uri_provided_explicitly boolean NOT NULL,
+                resource text NOT NULL,
+                expires_at timestamptz NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS oauth_codes (
+                code_hash text PRIMARY KEY,
+                client_id text NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                scopes jsonb NOT NULL,
+                code_challenge text NOT NULL,
+                redirect_uri text NOT NULL,
+                redirect_uri_provided_explicitly boolean NOT NULL,
+                resource text NOT NULL,
+                expires_at timestamptz NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS oauth_tokens (
+                access_token_hash text PRIMARY KEY,
+                refresh_token_hash text NOT NULL UNIQUE,
+                client_id text NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                scopes jsonb NOT NULL,
+                resource text NOT NULL,
+                access_expires_at timestamptz NOT NULL,
+                refresh_expires_at timestamptz NOT NULL,
                 created_at timestamptz NOT NULL DEFAULT now(),
                 last_used_at timestamptz
             );
@@ -205,6 +250,11 @@ def init_db():
             CREATE INDEX IF NOT EXISTS versions_project_id_idx ON versions (project_id);
             CREATE INDEX IF NOT EXISTS project_members_user_id_idx ON project_members (user_id);
             CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens (user_id);
+            CREATE INDEX IF NOT EXISTS oauth_requests_client_id_idx ON oauth_requests (client_id);
+            CREATE INDEX IF NOT EXISTS oauth_codes_client_id_idx ON oauth_codes (client_id);
+            CREATE INDEX IF NOT EXISTS oauth_codes_user_id_idx ON oauth_codes (user_id);
+            CREATE INDEX IF NOT EXISTS oauth_tokens_user_id_idx ON oauth_tokens (user_id);
+            CREATE INDEX IF NOT EXISTS oauth_tokens_client_id_idx ON oauth_tokens (client_id);
             -- 목록·삭제에 쓰는 번호. 토큰 값 자체를 다시 내보내지 않으려고 둔다
             ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS id serial;
             -- 예전 'viewer' 멤버 등급은 없어졌다. 읽기 전용은 이제 공유 링크 상태이지 멤버가 아니다
@@ -224,6 +274,9 @@ def init_db():
             -- ponytail: 세션 만료는 기동 시 30일 지난 것만 지우는 방식. 요청마다 검사해야 하면 opt_user 에 조건 추가
             DELETE FROM sessions WHERE created_at < now() - interval '30 days';
             DELETE FROM login_attempts WHERE last_fail < now() - interval '24 hours';
+            DELETE FROM oauth_requests WHERE expires_at < now();
+            DELETE FROM oauth_codes WHERE expires_at < now();
+            DELETE FROM oauth_tokens WHERE refresh_expires_at < now();
         """)
 
         # 예전 행에는 slug 가 없다. 행마다 다른 난수를 넣어야 하니 여기서 채운다
@@ -257,13 +310,32 @@ def hash_pw(pw: str, salt: str | None = None) -> str:
 API_TOKEN_PREFIX = "olg_"       # MCP·플러그인 토큰은 눈으로 구분되게 접두어를 붙인다
 
 
-def opt_user(authorization: str | None = Header(None)) -> dict | None:
-    """브라우저 세션 토큰이나 계정별 API 토큰(olg_…) 으로 사용자를 찾는다."""
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    tok = authorization[7:]
+def token_hash(token: str) -> str:
+    """원문 OAuth 토큰을 DB에 남기지 않기 위한 고정 길이 조회 키."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def lookup_token_user(tok: str) -> dict | None:
+    """브라우저 세션·API 토큰·OAuth access token을 한 곳에서 검증한다."""
     with pool.connection() as conn, conn.cursor() as cur:
-        if tok.startswith(API_TOKEN_PREFIX):
+        auth = {}
+        if tok.startswith(OAUTH_ACCESS_PREFIX):
+            digest = token_hash(tok)
+            cur.execute("""SELECT u.id, u.login_id, u.display_name, u.role, u.status,
+                                  t.client_id, t.scopes, extract(epoch from t.access_expires_at),
+                                  t.resource
+                           FROM oauth_tokens t JOIN users u ON u.id = t.user_id
+                           WHERE t.access_token_hash = %s AND t.access_expires_at > now()
+                             AND t.resource = %s""", (digest, OAUTH_RESOURCE))
+            row = cur.fetchone()
+            if row:
+                cur.execute("""UPDATE oauth_tokens SET last_used_at = now()
+                               WHERE access_token_hash = %s
+                                 AND (last_used_at IS NULL
+                                      OR last_used_at < now() - interval '1 hour')""", (digest,))
+                auth = {"client_id": row[5], "scopes": row[6],
+                        "expires_at": int(row[7]), "resource": row[8]}
+        elif tok.startswith(API_TOKEN_PREFIX):
             cur.execute("""SELECT u.id, u.login_id, u.display_name, u.role, u.status FROM api_tokens t
                            JOIN users u ON u.id = t.user_id WHERE t.token = %s""", (tok,))
             row = cur.fetchone()
@@ -278,7 +350,14 @@ def opt_user(authorization: str | None = Header(None)) -> dict | None:
             row = cur.fetchone()
     if not row or row[4] != "active":
         return None                      # 대기·차단 계정의 토큰은 통하지 않는다
-    return {"id": row[0], "login_id": row[1], "display_name": row[2], "role": row[3]}
+    return {"id": row[0], "login_id": row[1], "display_name": row[2], "role": row[3], **auth}
+
+
+def opt_user(authorization: str | None = Header(None)) -> dict | None:
+    """Bearer 세션·계정별 API 토큰·OAuth access token으로 사용자를 찾는다."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    return lookup_token_user(authorization[7:])
 
 
 def current_user(user: dict | None = Depends(opt_user)) -> dict:
@@ -516,9 +595,9 @@ def register(body: RegisterCredentials):
             "message": "가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다."}
 
 
-@app.post("/api/auth/login")
-def login(body: LoginCredentials, request: Request):
-    login_id = body.login_id.strip()
+def authenticate_user(login_id: str, password: str, request: Request) -> dict:
+    """공용 로그인 검증. REST와 OAuth가 같은 잠금 정책을 사용한다."""
+    login_id = login_id.strip()
     ip = client_ip(request)
     ukey, ipkey = fail_keys(login_id, ip)
     with pool.connection() as conn, conn.cursor() as cur:
@@ -532,7 +611,7 @@ def login(body: LoginCredentials, request: Request):
         raise HTTPException(429, "로그인 실패가 많아 이 위치에서 로그인이 제한됩니다."
                                  f" {fmt_dur(left_sec)} 뒤에 다시 시도하세요.")
     ok = bool(u) and secrets.compare_digest(
-        hash_pw(body.password, u[1].split("$")[0]), u[1])
+        hash_pw(password, u[1].split("$")[0]), u[1])
     if not ok:
         left, locked = bump_login_fail(login_id, ip)
         raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다"
@@ -545,8 +624,14 @@ def login(body: LoginCredentials, request: Request):
 
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM login_attempts WHERE key = ANY(%s)", ([ukey, ipkey],))
-        return {"token": make_session(cur, u[0]), "id": u[0], "login_id": login_id,
-                "display_name": u[4], "role": u[2]}
+    return {"id": u[0], "login_id": login_id, "display_name": u[4], "role": u[2]}
+
+
+@app.post("/api/auth/login")
+def login(body: LoginCredentials, request: Request):
+    user = authenticate_user(body.login_id, body.password, request)
+    with pool.connection() as conn, conn.cursor() as cur:
+        return {**user, "token": make_session(cur, user["id"])}
 
 
 @app.get("/api/me")
@@ -655,6 +740,8 @@ def change_my_password(body: PasswordChange, user: dict = Depends(current_user))
         cur.execute("UPDATE users SET password = %s WHERE id = %s",
                     (hash_pw(body.password), user["id"]))
         cur.execute("DELETE FROM sessions WHERE user_id = %s", (user["id"],))
+        cur.execute("DELETE FROM oauth_codes WHERE user_id = %s", (user["id"],))
+        cur.execute("DELETE FROM oauth_tokens WHERE user_id = %s", (user["id"],))
         return {"token": make_session(cur, user["id"]), "id": user["id"],
                 "login_id": user["login_id"], "display_name": user["display_name"],
                 "role": user["role"]}
@@ -809,6 +896,8 @@ def admin_set_password(uid: int, body: PasswordIn, _: dict = Depends(admin_user)
         cur.execute("DELETE FROM sessions WHERE user_id = %s", (uid,))
         # 계정을 되찾는 상황이므로 플러그인 토큰도 함께 끊는다
         cur.execute("DELETE FROM api_tokens WHERE user_id = %s", (uid,))
+        cur.execute("DELETE FROM oauth_codes WHERE user_id = %s", (uid,))
+        cur.execute("DELETE FROM oauth_tokens WHERE user_id = %s", (uid,))
         cur.execute("DELETE FROM login_attempts WHERE key LIKE %s", ("u:" + row[0] + "@%",))
 
 
@@ -1495,8 +1584,66 @@ def delete_comment(comment_id: int, user: dict = Depends(current_user)):
             raise HTTPException(404, "본인 코멘트만 삭제할 수 있습니다")
 
 
+# ---------- OAuth 승인 화면 ----------
+def oauth_login_page(request_id: str, client_name: str, error: str = "", status: int = 200):
+    safe_request = html.escape(request_id, quote=True)
+    safe_client = html.escape(client_name or "ChatGPT / Codex")
+    error_html = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    body = f"""<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>얼개 플래너 연결</title><style>
+body{{margin:0;background:#f4f5f7;color:#202124;font-family:system-ui,sans-serif}}
+main{{max-width:420px;margin:10vh auto;padding:28px;background:white;border:1px solid #ddd;border-radius:16px}}
+h1{{font-size:24px;margin:0 0 10px}} p{{line-height:1.55;color:#666}}
+label{{display:block;margin:16px 0 6px;font-weight:650}} input{{box-sizing:border-box;width:100%;padding:12px;border:1px solid #bbb;border-radius:9px;font-size:16px}}
+button{{width:100%;margin-top:22px;padding:12px;border:0;border-radius:9px;background:#242424;color:white;font-size:16px;font-weight:700;cursor:pointer}}
+.client{{color:#202124;font-weight:700}} .error{{padding:10px;border-radius:8px;background:#fff0ef;color:#b42318}}
+small{{display:block;margin-top:14px;color:#777;line-height:1.45}}
+</style></head><body><main><h1>얼개 플래너 연결</h1>
+<p><span class="client">{safe_client}</span>에서 내 프로젝트를 읽고 편집하도록 승인합니다.</p>
+{error_html}<form method="post" action="/oauth/login">
+<input type="hidden" name="request_id" value="{safe_request}">
+<label for="login_id">아이디</label><input id="login_id" name="login_id" autocomplete="username" required maxlength="200">
+<label for="password">비밀번호</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1000">
+<button type="submit">로그인하고 연결 승인</button></form>
+<small>비밀번호는 얼개 플래너에서만 확인하며 ChatGPT나 Codex에 전달하지 않습니다.</small>
+</main></body></html>"""
+    return HTMLResponse(body, status_code=status, headers={
+        "Cache-Control": "no-store", "Pragma": "no-cache",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
+    })
+
+
+@app.get("/oauth/login")
+async def oauth_login_form(request: str):
+    pending = await mcp_app.provider.pending_info(request)
+    if not pending:
+        return oauth_login_page("", "", "승인 요청이 만료되었거나 올바르지 않습니다.", 410)
+    return oauth_login_page(request, pending["client_name"])
+
+
+@app.post("/oauth/login")
+async def oauth_login_submit(request: Request):
+    form = await request.form()
+    request_id = str(form.get("request_id", ""))[:300]
+    login_id = str(form.get("login_id", ""))[:200]
+    password = str(form.get("password", ""))[:1000]
+    pending = await mcp_app.provider.pending_info(request_id)
+    if not pending:
+        return oauth_login_page("", "", "승인 요청이 만료되었거나 올바르지 않습니다.", 410)
+    try:
+        user = authenticate_user(login_id, password, request)
+    except HTTPException as exc:
+        return oauth_login_page(request_id, pending["client_name"], str(exc.detail), exc.status_code)
+    redirect_url = await mcp_app.provider.complete_authorization(request_id, user["id"])
+    if not redirect_url:
+        return oauth_login_page("", "", "승인 요청이 만료되었습니다. 연결을 다시 시작하세요.", 410)
+    return RedirectResponse(redirect_url, status_code=302, headers={"Cache-Control": "no-store"})
+
+
 # ---------- MCP (/mcp) ----------
 # 위 핸들러들을 재사용하므로 정의가 끝난 이 자리에서 import 한다.
 import mcp_app  # noqa: E402
 
-app.mount("/mcp", mcp_app.asgi_app())
+app.mount("/oauth-server", mcp_app.asgi_app())

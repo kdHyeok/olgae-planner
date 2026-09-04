@@ -18,7 +18,7 @@
 - **사용자 / 코멘트**
   - 로그인 ID + 표시 이름 + 8자 이상 비밀번호로 회원가입, 로그인 ID + 비밀번호로 로그인
     (PBKDF2 해시, DB 세션 토큰 — 발급 30일 지난 세션은 기동 시 정리)
-  - MCP·플러그인은 별도의 **계정별 API 토큰**(`olg_…`)을 씁니다 — 로그아웃해도 유지
+  - ChatGPT는 OAuth 2.1(PKCE), Claude/Codex 플러그인은 **계정별 API 토큰**(`olg_…`)을 지원
   - 로그인한 사용자는 각 기능 항목에 코멘트 작성 가능, 본인 코멘트만 삭제 가능
   - **가입 승인제**: 첫 계정은 곧바로 관리자, 이후 가입은 `pending` 으로 대기하며 관리자 승인 후 로그인
   - **로그인 시도 제한**: 같은 IP 에서 한 계정에 5회, 또는 한 IP 에서 총 20회 실패하면 잠김.
@@ -148,6 +148,8 @@ docker compose up -d --build
 ### 포트/설정 변경
 
 - 서비스 포트: `docker-compose.yml`의 `frontend.ports`(`"3000:80"`) 수정
+- OAuth 공개 주소: `PUBLIC_URL` (기본값 `https://prd.donhse.duckdns.org`). 다른 도메인에 배포하면
+  `.env`에 `PUBLIC_URL=https://실제-도메인`을 지정합니다. HTTPS 주소와 `/mcp` 외부 경로가 실제 접속 주소와 같아야 합니다
 - DB 계정/비밀번호: `.env` 의 `POSTGRES_USER`·`POSTGRES_PASSWORD`·`POSTGRES_DB`
   (`DATABASE_URL` 은 compose 가 이 값들로 조립합니다. 기존 볼륨의 비밀번호는 최초 생성 시점에 정해지므로,
   바꾸려면 `docker compose down -v` 로 초기화해야 합니다)
@@ -213,7 +215,23 @@ docker compose up -d --build
 
 백엔드가 `/mcp` 에 HTTP MCP 엔드포인트를 함께 제공합니다. 사용자는 **설치 없이 명령 한 줄**로 등록합니다.
 
-인증은 **계정별 API 토큰**(`olg_…`)으로 합니다. 브라우저 세션과 별개라 로그아웃해도 계속 쓸 수 있습니다.
+ChatGPT·Codex가 사용자 로그인을 직접 연결할 때는 **OAuth 2.1 Authorization Code + PKCE(S256)** 를 씁니다.
+기존 Claude/Codex 플러그인과 수동 MCP 등록은 **계정별 API 토큰**(`olg_…`)도 계속 지원합니다.
+OAuth access token은 1시간, refresh token은 30일이며 갱신할 때 둘 다 회전합니다. DB에는 원문 대신 해시만 저장합니다.
+
+### ChatGPT 연결
+
+1. ChatGPT의 새 플러그인에서 서버 URL에 `https://prd.donhse.duckdns.org/mcp`를 입력합니다.
+2. 인증은 **OAuth**를 선택합니다. DCR로 공개 클라이언트가 등록되고 `client_secret`은 발급하지 않습니다.
+3. 처음 툴을 사용할 때 열리는 얼개 플래너 화면에서 기존 아이디·비밀번호로 로그인하고 승인합니다.
+
+서버는 `/.well-known/oauth-protected-resource/mcp`와
+`/.well-known/oauth-authorization-server` discovery 문서를 제공하며, 인증 없는 `/mcp` 요청에는
+`WWW-Authenticate`가 포함된 401을 반환합니다. OAuth 토큰도 기존 프로젝트 권한 판정을 그대로 사용합니다.
+
+### API 토큰 방식
+
+브라우저 세션과 별개라 로그아웃해도 계속 쓸 수 있습니다.
 앱에서 헤더 메뉴 → **플러그인 설치** 를 열어 `+ 새 토큰 발급` 을 누르면 됩니다
 (발급 직후 한 번만 전체 값이 보이고, 목록에는 앞뒤만 남습니다. 유출됐으면 그 자리에서 삭제).
 
@@ -282,6 +300,7 @@ claude plugin install olgae-planner@olgae-planner
 
 ```bash
 docker compose up -d --build
+docker compose exec -T backend python test_oauth.py  # OAuth 전체 스모크 테스트
 # 로그인해 세션 토큰을 받고, 그것으로 API 토큰을 발급받는다
 SESS=$(curl -s -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" -d '{"login_id":"<아이디>","password":"<비밀번호>"}' \
@@ -326,8 +345,9 @@ claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py          # FastAPI 전체 (스키마 생성 + 마이그레이션 + API)
-│   └── mcp_app.py       # /mcp HTTP MCP 서버 (main 의 핸들러를 재사용)
+│   ├── main.py          # FastAPI 전체 (스키마 생성 + 마이그레이션 + API·OAuth 로그인 화면)
+│   ├── mcp_app.py       # /mcp HTTP MCP + OAuth 2.1 서버 (main 의 핸들러를 재사용)
+│   └── test_oauth.py    # DCR·PKCE·MCP·refresh·revoke 스모크 테스트
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf       # 정적 서빙 + /api 프록시
@@ -347,6 +367,7 @@ DB 구조는 [`doc/ERD.md`](doc/ERD.md) 에 관계도와 컬럼 설명이 있습
   (아니면 로그인 잠금이 프록시 IP 하나로 뭉쳐 모든 사용자가 함께 잠깁니다)
 - 신규 가입은 승인제를 유지하거나 관리자 페이지에서 차단
 - `MCP_ALLOWED_HOSTS` 에 배포 도메인 지정 (비우면 Host 검사가 꺼집니다)
+- `PUBLIC_URL` 이 실제 외부 HTTPS 주소와 일치하는지 확인 (기본 운영 주소는 `https://prd.donhse.duckdns.org`)
 - 이미지는 URL 을 알면 인증 없이 열립니다(`/api/images/<id>`, id 는 128비트 난수)
 - 업로드는 PNG·JPEG·GIF·WebP 만 받고 앞바이트로 검증합니다(SVG 는 스크립트를 품을 수 있어 거부).
   프로필 이미지(data URL)도 base64 이미지 형식만 허용합니다
