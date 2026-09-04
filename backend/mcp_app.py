@@ -143,12 +143,12 @@ def list_terms(project_id: str, ctx: Context) -> list[dict]:
 
 
 @server.tool()
-def set_term(term_id: int, ctx: Context, description: str | None = None,
+def set_term(term_id: int, ctx: Context, description: str | None = None, note: str | None = None,
              category_id: int | None = None, sort_order: int | None = None) -> dict:
-    """용어의 설명(마크다운)·카테고리·표시 순서를 바꾼다.
+    """용어의 설명(마크다운)·비고·카테고리·표시 순서를 바꾼다.
     용어 자체는 본문에서 자동 수집되므로 여기서 만들 수는 없다."""
     fields = {k: v for k, v in {
-        "description": description, "category_id": category_id, "sort_order": sort_order,
+        "description": description, "note": note, "category_id": category_id, "sort_order": sort_order,
     }.items() if v is not None}
     if not fields:
         raise ToolError("바꿀 항목을 하나 이상 넘겨야 합니다")

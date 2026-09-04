@@ -46,6 +46,31 @@ claude plugin marketplace add ./          # 클론한 저장소 루트에서
 claude plugin install olgae-planner@olgae-planner
 ```
 
+### 소스 갈아타기 (로컬 경로 ↔ GitHub)
+
+마켓플레이스는 `marketplace.json` 의 `name` 으로 식별하므로 두 방법이 **같은 이름**을 쓴다.
+이미 등록된 이름에 다른 소스를 더하면 이렇게 거절된다.
+
+```
+✘ Failed to add marketplace: Cannot add marketplace "olgae-planner":
+  its network source differs from the one declared for it in settings …
+```
+
+`add` 에는 덮어쓰기 옵션이 없으니 **지우고 다시 등록**한다. 마켓플레이스를 지우면
+플러그인도 함께 빠지므로 설치를 한 번 더 해 준다.
+
+```bash
+claude plugin marketplace remove olgae-planner
+claude plugin marketplace add kdHyeok/olgae-planner
+claude plugin install olgae-planner@olgae-planner
+```
+
+`claude plugin marketplace list` 로 소스가 `GitHub (kdHyeok/olgae-planner)` 로 바뀐 것을 확인한다.
+저장소 내용만 갱신하려면 소스를 바꿀 필요 없이 `claude plugin marketplace update olgae-planner` 를 쓴다.
+
+> 저장소가 **private** 이어도 소유자·협업자는 로컬 git 자격증명으로 clone 되어 GitHub 소스가 등록된다.
+> 하지만 **다른 사람은 public 이어야** 등록할 수 있다.
+
 등록 뒤 Claude Code 를 재시작하고 `/mcp` 로 연결(`plugin:olgae-planner:olgae-planner`),
 `/plugin` 으로 스킬 `olgae-planner` 을 확인한다.
 

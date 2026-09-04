@@ -16,13 +16,14 @@
   - **드래그 & 드롭**: 카드를 다른 카드 박스 위에 드롭 → 그 하위로 이동. 트리 뷰의 `PRD` 루트 카드(또는 디렉토리 뷰 목록 빈 곳)에 드롭 → 대분류로 승격. 자기 하위로의 순환 이동은 차단
   - **▲▼ 버튼**: 같은 부모 안에서 순서 변경
 - **사용자 / 코멘트**
-  - 사용자 이름 + 비밀번호로 회원가입/로그인 (PBKDF2 해시, DB 세션 토큰 — 발급 30일 지난 세션은 기동 시 정리)
+  - 로그인 ID + 표시 이름 + 8자 이상 비밀번호로 회원가입, 로그인 ID + 비밀번호로 로그인
+    (PBKDF2 해시, DB 세션 토큰 — 발급 30일 지난 세션은 기동 시 정리)
   - MCP·플러그인은 별도의 **계정별 API 토큰**(`olg_…`)을 씁니다 — 로그아웃해도 유지
   - 로그인한 사용자는 각 기능 항목에 코멘트 작성 가능, 본인 코멘트만 삭제 가능
   - **가입 승인제**: 첫 계정은 곧바로 관리자, 이후 가입은 `pending` 으로 대기하며 관리자 승인 후 로그인
   - **로그인 시도 제한**: 같은 IP 에서 한 계정에 5회, 또는 한 IP 에서 총 20회 실패하면 잠김.
     잠금이 반복될수록 **30초 → 1분 → 3분 → 5분 → 10분 → 30분** 으로 길어지고, 24시간 조용하면 처음으로 돌아감
-    (계정 이름만으로 잠그지 않아 남의 아이디를 잠글 수 없음. 성공·비밀번호 변경 시 해제)
+    (로그인 ID만으로 잠그지 않아 남의 아이디를 잠글 수 없음. 성공·비밀번호 변경 시 해제)
   - **등급별 프로젝트 한도**: `admin` 무제한 · `pro` 5개 · `member` 3개 · `guest` 1개
   - **내 계정 창**: 헤더의 사용자 아이콘을 누르면 프로필 이미지 등록, 등급,
     남은 프로젝트 수·이미지 용량 게이지, 비밀번호 변경이 한 창에 뜸
@@ -62,7 +63,7 @@
   - 헤더 `⋯` 메뉴의 **마크다운으로 내보내기** → PRD + 기능명세서 전체를 `<프로젝트명>.md` 파일로 저장
   - 기능은 번호가 매겨진 헤딩(`### 1`, `#### 1.1`)과 상태·중요도 목록으로 출력, 이미지 주소는 절대경로로 변환
 - **관리자 페이지** (헤더 메뉴 → `관리자`, admin 등급만)
-  - 계정 목록: 등급 변경, 프로젝트 수/한도 확인, 비밀번호 변경(관리자 계정 포함), 계정 완전 삭제
+  - 계정 목록: 계정 정보(로그인 ID·이름·비밀번호)·등급 변경, 프로젝트 수/한도 확인, 계정 완전 삭제
   - 계정별 프로젝트 목록에서 개별 프로젝트 삭제
   - 신규 가입: 허용/차단 토글, 가입 신청 목록, 등급을 골라 승인, 거절
   - 마지막 관리자 계정은 강등·삭제가 차단되고, 자기 계정은 삭제할 수 없음
@@ -173,7 +174,7 @@ docker compose up -d --build
 | POST | `/api/projects/{pid}/images` | 이미지 업로드 (원본 바이트 + `Content-Type: image/*`, 5MB 이하) → `{url}` |
 | GET | `/api/images/{id}` | 업로드된 이미지 조회 |
 | GET | `/api/projects/{pid}/terms` | 용어 목록 (호출 시 본문을 스캔해 자동 생성·삭제) |
-| PUT | `/api/terms/{tid}` | 용어 수정 (`{description?, category_id?, sort_order?}`) |
+| PUT | `/api/terms/{tid}` | 용어 수정 (`{description?, note?, category_id?, sort_order?}`) |
 | GET / POST | `/api/projects/{pid}/term-categories` | 카테고리 목록 / 추가 (`{name}`) |
 | DELETE | `/api/term-categories/{cid}` | 카테고리 삭제 (용어는 미분류로 남음) |
 | GET / POST | `/api/projects/{pid}/versions` | 버전 목록 / 현재 PRD + 기능명세서 스냅샷 저장 (로그인 필요) |
@@ -181,18 +182,22 @@ docker compose up -d --build
 | DELETE | `/api/versions/{vid}` | 버전 삭제 — 소유자만 |
 | GET | `/api/projects/{pid}/images` | 앨범 목록 (`id, created_at, bytes, used`) |
 | POST | `/api/projects/{pid}/images/delete` | 선택 이미지 삭제 (`{ids: [...]}`) → `{deleted, bytes}` |
-| POST | `/api/auth/register` | 회원가입 (`{username, password}` → `{token, username}`) |
-| POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
+| GET | `/api/auth/id-available?login_id=...` | 로그인 ID 중복 확인 (`{available}`) |
+| POST | `/api/auth/register` | 회원가입 (`{login_id, display_name, password}`·비밀번호 8자 이상) |
+| POST | `/api/auth/login` | 로그인 (`{login_id, password}`) |
 | POST | `/api/auth/logout` | 로그아웃 (Bearer 토큰) |
 | GET | `/api/me` | 내 등급·프로젝트 수·이미지 사용량과 한도·프로필 이미지 |
+| PUT | `/api/me/display-name` | 내 표시 이름 변경 (`{display_name}`) |
 | GET / POST | `/api/me/tokens` | MCP·플러그인 토큰 목록(마스킹) / 발급 (계정당 10개) |
 | DELETE | `/api/me/tokens/{id}` | 토큰 폐기 |
 | PUT | `/api/me/avatar` | 프로필 이미지 등록/삭제 (`{avatar}` data URL 또는 null) |
-| PUT | `/api/me/password` | 내 비밀번호 변경 (`{current, password}`, 새 토큰을 돌려줌) |
+| PUT | `/api/me/password` | 내 비밀번호 변경 (`{current, password}`, 새 비밀번호 8자 이상, 새 토큰 반환) |
 | GET | `/api/signup-open` | 신규 가입 허용 여부 (공개) |
 | GET | `/api/admin/users` | 계정 목록 (등급·상태·프로젝트 수·이미지 사용량·한도) — admin |
 | PUT | `/api/admin/users/{uid}/role` | 등급 변경 (`{role}`) — admin |
-| PUT | `/api/admin/users/{uid}/password` | 비밀번호 변경 (세션·잠금 해제) — admin |
+| PUT | `/api/admin/users/{uid}/login-id` | 로그인 ID 변경(중복 불가) — admin |
+| PUT | `/api/admin/users/{uid}/display-name` | 표시 이름 변경 — admin |
+| PUT | `/api/admin/users/{uid}/password` | 비밀번호 변경 (8자 이상, 세션·잠금 해제) — admin |
 | DELETE | `/api/admin/users/{uid}` | 계정 완전 삭제 (연관 데이터 CASCADE) — admin |
 | GET | `/api/admin/users/{uid}/projects` | 그 계정의 프로젝트 목록 — admin |
 | DELETE | `/api/admin/projects/{pid}` | 프로젝트 삭제 — admin |
@@ -256,6 +261,15 @@ claude plugin install olgae-planner@olgae-planner
 들어 있지 않고 `${OLGAE_URL}` · `${OLGAE_TOKEN}` 으로 받으므로, 각자 자기 서버·자기 토큰을
 환경변수로 넣어 씁니다 — 한 플러그인으로 여러 배포 서버를 쓸 수 있습니다.
 
+개발 중에 `./` 로 등록해 뒀다면 이름이 같아 GitHub 소스를 그냥 더할 수 없습니다.
+지우고 다시 등록하세요(자세한 설명은 [plugin/README.md](plugin/README.md#소스-갈아타기-로컬-경로--github)):
+
+```bash
+claude plugin marketplace remove olgae-planner
+claude plugin marketplace add kdHyeok/olgae-planner
+claude plugin install olgae-planner@olgae-planner
+```
+
 이미 `claude mcp add olgae-planner` 으로 수동 등록해 뒀다면 이름이 겹쳐 플러그인 설정이 가려집니다
 (`claude mcp remove olgae-planner` 후 사용).
 
@@ -270,7 +284,7 @@ claude plugin install olgae-planner@olgae-planner
 docker compose up -d --build
 # 로그인해 세션 토큰을 받고, 그것으로 API 토큰을 발급받는다
 SESS=$(curl -s -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" -d '{"username":"<계정>","password":"<비밀번호>"}' \
+  -H "Content-Type: application/json" -d '{"login_id":"<아이디>","password":"<비밀번호>"}' \
   | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
 TOK=$(curl -s -X POST http://localhost:3000/api/me/tokens \
   -H "Authorization: Bearer $SESS" -H "Content-Type: application/json" -d '{"name":"local"}' \
@@ -290,7 +304,7 @@ claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local
 | `get_spec` | PRD 본문 + 기능 트리 한 번에. 화면과 같은 계층 번호(`1`, `1.1`) 포함 |
 | `set_prd` | PRD 본문 전체 덮어쓰기 |
 | `create_node` / `update_node` / `delete_node` | 기능 항목 추가 / 부분 수정 / 삭제(하위 포함) |
-| `list_terms` / `set_term` | 용어 목록(호출 시 자동 동기화) / 설명·카테고리·순서 수정 |
+| `list_terms` / `set_term` | 용어 목록(호출 시 자동 동기화) / 설명·비고·카테고리·순서 수정 |
 | `save_version` / `list_versions` / `restore_version` | 스냅샷 저장 / 목록 / 복원 |
 | `list_comments` / `add_comment` | 코멘트 조회 / 작성 |
 

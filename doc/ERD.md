@@ -29,7 +29,9 @@ erDiagram
 
     users {
         serial id PK "사용자 ID"
-        text username UK "사용자 이름(고유)"
+        text username UK "이전 버전 호환용 로그인 ID"
+        text login_id UK "로그인 ID(고유)"
+        text display_name "표시 이름"
         text password "비밀번호 해시(salt$pbkdf2)"
         text role "등급 admin·pro·member·guest"
         text status "상태 active·pending(가입 승인 대기)"
@@ -111,6 +113,7 @@ erDiagram
         int project_id FK "소속 프로젝트"
         text term "용어(프로젝트 안 고유)"
         text description "설명(마크다운)"
+        text note "비고(마크다운)"
         int sort_order "표시 순서"
         int category_id FK "카테고리(없으면 NULL)"
     }
@@ -146,7 +149,9 @@ erDiagram
 | 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
 |---|---|---|---|---|---|
 | `id` | 사용자 ID | serial | PK | 자동 증가 | |
-| `username` | 사용자 이름 | text | UK, NN | | 로그인 ID |
+| `username` | 이전 로그인 ID | text | UK, NN | | 이전 버전 호환용. 새 계정은 `login_id`와 같은 값으로 저장 |
+| `login_id` | 로그인 ID | text | UK (`users_login_id_idx`), NN | | 로그인과 중복 확인에 사용 |
+| `display_name` | 표시 이름 | text | NN | | 화면에 표시. 중복 허용 |
 | `password` | 비밀번호 해시 | text | NN | | `salt$hash` 형식(PBKDF2-SHA256, 10만 회). 원문 저장 안 함 |
 | `role` | 등급 | text | NN | `'member'` | `admin`(무제한·관리자 페이지) · `pro`(5) · `member`(3) · `guest`(1). 프로젝트 수와 이미지 총량 한도를 정함 |
 | `status` | 상태 | text | NN | `'pending'` | `active` 로그인 가능 · `pending` 가입 승인 대기. 첫 계정만 곧바로 `admin`/`active` |
@@ -207,7 +212,7 @@ erDiagram
 | `locked_until` | 잠금 해제 시각 | timestamptz | | | 이 시각까지 로그인을 막음 |
 | `last_fail` | 마지막 실패 시각 | timestamptz | NN | `now()` | 위 두 초기화 판단 기준 |
 
-계정 이름만으로 잠그면 남의 아이디를 잠글 수 있어 **IP 를 키에 함께** 넣습니다.
+로그인 ID만으로 잠그면 남의 아이디를 잠글 수 있어 **IP 를 키에 함께** 넣습니다.
 `u:` 키가 5회, `ip:` 키가 20회를 넘으면 잠그고, **반복될수록 잠금이 길어집니다** —
 30초 → 1분 → 3분 → 5분 → 10분 → 30분(이후 유지). IP 는 nginx 가 넣는 `X-Real-IP` 를 씁니다.
 로그인 성공·비밀번호 변경 시 해당 키를 지우고, 기동 시 24시간 지난 행을 정리합니다.
@@ -295,6 +300,7 @@ MCP 툴의 `project_id` 모두 slug 를 씁니다. `find_project()` 가 slug 를
 | `project_id` | 소속 프로젝트 | int | FK → projects(id) CASCADE, NN | | |
 | `term` | 용어 | text | NN | | `(project_id, term)` UNIQUE. 본문의 `` `용어` `` 에서 자동 수집 |
 | `description` | 설명 | text | NN | `''` | 마크다운 |
+| `note` | 비고 | text | NN | `''` | 마크다운 |
 | `sort_order` | 표시 순서 | int | NN | `0` | 기본값은 등록(본문 등장) 순서 |
 | `category_id` | 카테고리 | int | FK → term_categories(id) SET NULL | | NULL 이면 미분류 |
 
@@ -333,6 +339,7 @@ PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습�
 | `nodes_project_id_idx`, `nodes_parent_id_idx` | 트리 조회 · 하위 연쇄 삭제 |
 | `comments_node_id_idx`, `comments_user_id_idx` | 항목별 코멘트 |
 | `images_project_id_idx`, `terms_project_id_idx`, `terms_category_id_idx`, `term_categories_project_id_idx`, `versions_project_id_idx` | 프로젝트별 목록 |
+| `users_login_id_idx` | 로그인 ID 중복 방지 |
 | `sessions_user_id_idx`, `projects_owner_id_idx` | 사용자 삭제 시 연쇄 |
 
 ## 레거시 정리 이력
