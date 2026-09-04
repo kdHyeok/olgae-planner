@@ -1610,7 +1610,7 @@ small{{display:block;margin-top:14px;color:#777;line-height:1.45}}
 </main></body></html>"""
     return HTMLResponse(body, status_code=status, headers={
         "Cache-Control": "no-store", "Pragma": "no-cache",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chatgpt.com; base-uri 'none'; frame-ancestors 'none'",
         "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
     })
 

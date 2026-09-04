@@ -78,6 +78,9 @@ def run():
         login_path = urlsplit(authorization.headers["Location"]).path + "?" + urlsplit(
             authorization.headers["Location"]).query
         request_id = parse_qs(urlsplit(login_path).query)["request"][0]
+        login_page = fetch(login_path)
+        assert login_page.status == 200
+        assert "form-action 'self' https://chatgpt.com" in login_page.headers["Content-Security-Policy"]
         callback = form("/oauth/login", {
             "request_id": request_id, "login_id": login_id, "password": password,
         }, redirect=False)
