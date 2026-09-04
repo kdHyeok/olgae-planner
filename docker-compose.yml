@@ -21,6 +21,8 @@ services:
       #   MCP_ALLOWED_HOSTS=prd.example.com docker compose up -d
       # 콤마로 여러 개 지정 가능. 빈 값으로 두면 검사를 끈다.
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS-localhost:3000,127.0.0.1:3000}
+      # OAuth issuer/resource의 외부 HTTPS 주소. 현재 운영 도메인은 별도 설정 없이 동작한다.
+      PUBLIC_URL: ${PUBLIC_URL:-https://prd.donhse.duckdns.org}
     depends_on:
       db:
         condition: service_healthy
