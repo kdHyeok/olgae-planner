@@ -17,6 +17,7 @@
   - **▲▼ 버튼**: 같은 부모 안에서 순서 변경
 - **사용자 / 코멘트**
   - 사용자 이름 + 비밀번호로 회원가입/로그인 (PBKDF2 해시, DB 세션 토큰 — 발급 30일 지난 세션은 기동 시 정리)
+  - MCP·플러그인은 별도의 **계정별 API 토큰**(`olg_…`)을 씁니다 — 로그아웃해도 유지
   - 로그인한 사용자는 각 기능 항목에 코멘트 작성 가능, 본인 코멘트만 삭제 가능
   - **가입 승인제**: 첫 계정은 곧바로 관리자, 이후 가입은 `pending` 으로 대기하며 관리자 승인 후 로그인
   - **로그인 시도 제한**: 같은 IP 에서 한 계정에 5회, 또는 한 IP 에서 총 20회 실패하면 잠김.
@@ -184,6 +185,8 @@ docker compose up -d --build
 | POST | `/api/auth/login` | 로그인 (→ `{token, username}`) |
 | POST | `/api/auth/logout` | 로그아웃 (Bearer 토큰) |
 | GET | `/api/me` | 내 등급·프로젝트 수·이미지 사용량과 한도·프로필 이미지 |
+| GET / POST | `/api/me/tokens` | MCP·플러그인 토큰 목록(마스킹) / 발급 (계정당 10개) |
+| DELETE | `/api/me/tokens/{id}` | 토큰 폐기 |
 | PUT | `/api/me/avatar` | 프로필 이미지 등록/삭제 (`{avatar}` data URL 또는 null) |
 | PUT | `/api/me/password` | 내 비밀번호 변경 (`{current, password}`, 새 토큰을 돌려줌) |
 | GET | `/api/signup-open` | 신규 가입 허용 여부 (공개) |
@@ -205,23 +208,29 @@ docker compose up -d --build
 
 백엔드가 `/mcp` 에 HTTP MCP 엔드포인트를 함께 제공합니다. 사용자는 **설치 없이 명령 한 줄**로 등록합니다.
 
-앱에서 헤더 메뉴 → **플러그인 설치** 를 열면 본인 토큰이 채워진 명령이 나오고 복사 버튼이 있습니다.
+인증은 **계정별 API 토큰**(`olg_…`)으로 합니다. 브라우저 세션과 별개라 로그아웃해도 계속 쓸 수 있습니다.
+앱에서 헤더 메뉴 → **플러그인 설치** 를 열어 `+ 새 토큰 발급` 을 누르면 됩니다
+(발급 직후 한 번만 전체 값이 보이고, 목록에는 앞뒤만 남습니다. 유출됐으면 그 자리에서 삭제).
+
+토큰으로 보이는 것은 **그 계정이 만든 프로젝트 + 멤버로 참여중인 프로젝트**이고,
+할 수 있는 일은 화면에서와 똑같이 프로젝트별 권한(편집자·공동 소유자·소유자)을 따릅니다.
 플러그인(마켓플레이스)으로 설치하는 방법이 기본이고, 아래 `claude mcp add` 는 플러그인 없이 MCP 만 붙일 때 씁니다.
 
 ```bash
-claude mcp add --transport http olgae-planner https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
+claude mcp add --transport http olgae-planner https://<호스트>/mcp -H "Authorization: Bearer olg_..."
 ```
 
 Cursor·Claude Desktop 등은 같은 창의 JSON 을 설정 파일에 붙여 넣습니다.
 
 ```json
 { "mcpServers": { "olgae-planner": { "type": "http", "url": "https://<호스트>/mcp",
-  "headers": { "Authorization": "Bearer <세션토큰>" } } } }
+  "headers": { "Authorization": "Bearer olg_..." } } } }
 ```
 
-- 인증은 **요청마다 Authorization 헤더**로 하며, 서버는 토큰을 저장하지 않습니다.
-  권한 판정은 REST API 와 같은 코드(`opt_user` / `check_access` / `check_owner`)를 그대로 씁니다.
-- 토큰 주인의 프로젝트 전체에 대한 읽기·쓰기 권한입니다. 로그아웃하면 즉시 무효가 되니 다시 등록해야 합니다.
+- 인증은 **요청마다 Authorization 헤더**로 하고, 권한 판정은 REST API 와 같은 코드
+  (`opt_user` / `access_level` / `require`)를 그대로 씁니다. 계정별 권한 그대로 동작합니다.
+- 토큰은 계정 하나에 최대 10개, 이름·발급일·마지막 사용 시각이 기록됩니다.
+  로그아웃해도 살아 있고, **관리자가 비밀번호를 재설정하면** 세션과 함께 끊깁니다.
 - `/mcp` 는 Host 검사로 DNS 리바인딩을 막습니다. `docker-compose.yml` 의 `MCP_ALLOWED_HOSTS` 가
   기본값으로 로컬 주소(`localhost:3000,127.0.0.1:3000`)만 허용하므로, **배포할 때는 도메인을 넘겨야 합니다**:
 
@@ -238,10 +247,14 @@ Claude Code 와 Codex 양쪽 매니페스트가 들어 있고, 토큰·주소는
 
 ```bash
 export OLGAE_URL=https://<호스트>/mcp
-export OLGAE_TOKEN=<세션 토큰>
+export OLGAE_TOKEN=olg_...        # 앱 → 플러그인 설치 → + 새 토큰 발급
 claude plugin marketplace add kdHyeok/olgae-planner   # 또는 클론한 저장소에서 ./
 claude plugin install olgae-planner@olgae-planner
 ```
+
+저장소가 public 이면 **누구나 위 두 줄로 설치**할 수 있습니다. 플러그인에는 주소도 토큰도
+들어 있지 않고 `${OLGAE_URL}` · `${OLGAE_TOKEN}` 으로 받으므로, 각자 자기 서버·자기 토큰을
+환경변수로 넣어 씁니다 — 한 플러그인으로 여러 배포 서버를 쓸 수 있습니다.
 
 이미 `claude mcp add olgae-planner` 으로 수동 등록해 뒀다면 이름이 겹쳐 플러그인 설정이 가려집니다
 (`claude mcp remove olgae-planner` 후 사용).
@@ -255,14 +268,21 @@ claude plugin install olgae-planner@olgae-planner
 
 ```bash
 docker compose up -d --build
-# 토큰 발급
-curl -s -X POST http://localhost:3000/api/auth/login   -H "Content-Type: application/json" -d '{"username":"<계정>","password":"<비밀번호>"}'
+# 로그인해 세션 토큰을 받고, 그것으로 API 토큰을 발급받는다
+SESS=$(curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" -d '{"username":"<계정>","password":"<비밀번호>"}' \
+  | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+TOK=$(curl -s -X POST http://localhost:3000/api/me/tokens \
+  -H "Authorization: Bearer $SESS" -H "Content-Type: application/json" -d '{"name":"local"}' \
+  | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
 # 등록 (-s local: 내 기기에만 저장)
-claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local   -H "Authorization: Bearer <위 토큰>"
+claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local \
+  -H "Authorization: Bearer $TOK"
 ```
 
 등록 뒤 Claude Code 를 재시작하고 `/mcp` 로 연결 상태를 확인합니다.
-브라우저에서 로그인한 상태라면 **MCP 연결** 모달의 명령을 그대로 복사하는 것이 가장 빠릅니다.
+목록에 `Connected` 로 떠도 토큰 검사를 통과한 것은 아니니 `list_projects` 를 한 번 호출해 보세요.
+브라우저에서 로그인한 상태라면 **플러그인 설치** 창의 명령을 그대로 복사하는 것이 가장 빠릅니다.
 
 | 툴 | 설명 |
 |---|---|

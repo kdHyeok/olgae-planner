@@ -63,6 +63,14 @@ def init_db():
                 created_at timestamptz NOT NULL DEFAULT now(),
                 PRIMARY KEY (project_id, user_id)
             );
+            -- MCP·플러그인용 토큰. 브라우저 세션과 분리해 로그아웃해도 살아 있다
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                token text PRIMARY KEY,
+                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name text NOT NULL DEFAULT '플러그인',
+                created_at timestamptz NOT NULL DEFAULT now(),
+                last_used_at timestamptz
+            );
             CREATE TABLE IF NOT EXISTS settings (
                 key text PRIMARY KEY,
                 value text NOT NULL
@@ -183,6 +191,9 @@ def init_db():
             CREATE INDEX IF NOT EXISTS term_categories_project_id_idx ON term_categories (project_id);
             CREATE INDEX IF NOT EXISTS versions_project_id_idx ON versions (project_id);
             CREATE INDEX IF NOT EXISTS project_members_user_id_idx ON project_members (user_id);
+            CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens (user_id);
+            -- 목록·삭제에 쓰는 번호. 토큰 값 자체를 다시 내보내지 않으려고 둔다
+            ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS id serial;
             -- 예전 'viewer' 멤버 등급은 없어졌다. 읽기 전용은 이제 공유 링크 상태이지 멤버가 아니다
             -- CREATE TABLE IF NOT EXISTS 로는 기존 테이블의 기본값이 바뀌지 않는다
             ALTER TABLE project_members ALTER COLUMN role SET DEFAULT 'editor';
@@ -226,16 +237,30 @@ def hash_pw(pw: str, salt: str | None = None) -> str:
     return f"{salt}${h}"
 
 
+API_TOKEN_PREFIX = "olg_"       # MCP·플러그인 토큰은 눈으로 구분되게 접두어를 붙인다
+
+
 def opt_user(authorization: str | None = Header(None)) -> dict | None:
+    """브라우저 세션 토큰이나 계정별 API 토큰(olg_…) 으로 사용자를 찾는다."""
     if not authorization or not authorization.startswith("Bearer "):
         return None
+    tok = authorization[7:]
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT u.id, u.username, u.role, u.status FROM sessions s
-                       JOIN users u ON u.id = s.user_id WHERE s.token = %s""",
-                    (authorization[7:],))
-        row = cur.fetchone()
+        if tok.startswith(API_TOKEN_PREFIX):
+            cur.execute("""SELECT u.id, u.username, u.role, u.status FROM api_tokens t
+                           JOIN users u ON u.id = t.user_id WHERE t.token = %s""", (tok,))
+            row = cur.fetchone()
+            if row:
+                # 마지막 사용 시각은 한 시간에 한 번만 적는다 (요청마다 쓰면 낭비)
+                cur.execute("""UPDATE api_tokens SET last_used_at = now() WHERE token = %s
+                               AND (last_used_at IS NULL
+                                    OR last_used_at < now() - interval '1 hour')""", (tok,))
+        else:
+            cur.execute("""SELECT u.id, u.username, u.role, u.status FROM sessions s
+                           JOIN users u ON u.id = s.user_id WHERE s.token = %s""", (tok,))
+            row = cur.fetchone()
     if not row or row[3] != "active":
-        return None                      # 대기·차단 계정의 세션은 통하지 않는다
+        return None                      # 대기·차단 계정의 토큰은 통하지 않는다
     return {"id": row[0], "username": row[1], "role": row[2]}
 
 
@@ -500,6 +525,50 @@ def me(user: dict = Depends(current_user)):
             "upload_bytes": up_used, "upload_limit": up_limit, "avatar": avatar}
 
 
+class TokenIn(BaseModel):
+    name: str = "플러그인"
+
+
+def token_row(r: dict) -> dict:
+    """목록에는 앞뒤만 보여 준다. 전체 값은 발급할 때 한 번만 돌려준다."""
+    t = r["token"]
+    return {"id": r["id"], "name": r["name"], "created_at": r["created_at"],
+            "last_used_at": r["last_used_at"],
+            "masked": t[:len(API_TOKEN_PREFIX) + 4] + "\u2026" + t[-4:]}
+
+
+@app.get("/api/me/tokens")
+def list_tokens(user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT id, token, name, created_at, last_used_at
+                       FROM api_tokens WHERE user_id = %s ORDER BY created_at""",
+                    (user["id"],))
+        return [token_row(r) for r in rows_to_dicts(cur)]
+
+
+@app.post("/api/me/tokens", status_code=201)
+def create_token(body: TokenIn, user: dict = Depends(current_user)):
+    """MCP·플러그인용 토큰을 발급한다. 전체 값은 이 응답에서만 볼 수 있다."""
+    name = (body.name or "플러그인").strip()[:40] or "플러그인"
+    tok = API_TOKEN_PREFIX + secrets.token_urlsafe(24)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM api_tokens WHERE user_id = %s", (user["id"],))
+        if cur.fetchone()[0] >= 10:
+            raise HTTPException(403, "토큰은 10개까지 만들 수 있습니다. 쓰지 않는 토큰을 지우세요.")
+        cur.execute("""INSERT INTO api_tokens (token, user_id, name) VALUES (%s, %s, %s)
+                       RETURNING token, name, created_at""", (tok, user["id"], name))
+        return rows_to_dicts(cur)[0]
+
+
+@app.delete("/api/me/tokens/{tid}", status_code=204)
+def delete_token(tid: int, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM api_tokens WHERE id = %s AND user_id = %s",
+                    (tid, user["id"]))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "토큰을 찾을 수 없습니다")
+
+
 class AvatarIn(BaseModel):
     avatar: str | None = None            # data URL. None 이면 삭제
 
@@ -646,6 +715,8 @@ def admin_set_password(uid: int, body: PasswordIn, _: dict = Depends(admin_user)
         cur.execute("UPDATE users SET password = %s WHERE id = %s",
                     (hash_pw(body.password), uid))
         cur.execute("DELETE FROM sessions WHERE user_id = %s", (uid,))
+        # 계정을 되찾는 상황이므로 플러그인 토큰도 함께 끊는다
+        cur.execute("DELETE FROM api_tokens WHERE user_id = %s", (uid,))
         cur.execute("DELETE FROM login_attempts WHERE key LIKE %s", ("u:" + row[0] + "@%",))
 
 
