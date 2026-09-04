@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-PRD & 기능명세서 관리 서비스. Docker Compose 로 `frontend`(nginx + `index.html` 하나) ·
+얼개 플래너 — PRD & 기능명세서 관리 서비스. Docker Compose 로 `frontend`(nginx + `index.html` 하나) ·
 `backend`(FastAPI + `main.py` 하나) · `db`(PostgreSQL 16) 를 띄운다.
 
 - 기능·API 목록: [`README.md`](README.md)

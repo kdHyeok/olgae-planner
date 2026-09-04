@@ -20,7 +20,7 @@ server = MCPServer(
     version="0.1.0",
     instructions=(
         "PRD 문서와 계층형 기능명세서를 읽고 고치는 툴이다. "
-        "먼저 list_projects 로 project_id 를 얻고, get_spec 으로 전체를 읽는다. "
+        "먼저 list_projects 로 slug 를 얻어 project_id 로 넘기고, get_spec 으로 전체를 읽는다. "
         "트리를 크게 고치기 전에는 save_version 으로 스냅샷을 남긴다."
     ),
 )
@@ -69,12 +69,12 @@ def _numbered(nodes: list[dict]) -> list[dict]:
 
 @server.tool()
 def list_projects(ctx: Context) -> list[dict]:
-    """내 프로젝트 목록. 다른 툴에 넘길 project_id 를 여기서 얻는다."""
+    """내 프로젝트 목록. 각 항목의 slug 를 다른 툴의 project_id 로 넘긴다(숫자 id 는 쓰지 않는다)."""
     return _wrap(main.list_projects, user=_user(ctx))
 
 
 @server.tool()
-def get_spec(project_id: int, ctx: Context) -> dict:
+def get_spec(project_id: str, ctx: Context) -> dict:
     """프로젝트의 PRD 본문과 기능명세서 트리를 한 번에 가져온다.
 
     nodes 의 number 는 화면에 보이는 계층 번호(1, 1.1 …)다.
@@ -88,7 +88,7 @@ def get_spec(project_id: int, ctx: Context) -> dict:
 
 
 @server.tool()
-def set_prd(project_id: int, content: str, ctx: Context) -> dict:
+def set_prd(project_id: str, content: str, ctx: Context) -> dict:
     """PRD 본문(마크다운) 전체를 덮어쓴다. 부분 수정이 아니므로 get_spec 으로 받은 뒤 고쳐서 보낸다."""
     _wrap(main.put_prd, project_id, main.PrdIn(content=content), user=_user(ctx))
     return {"ok": True, "chars": len(content)}
@@ -97,7 +97,7 @@ def set_prd(project_id: int, content: str, ctx: Context) -> dict:
 # ---------- 기능명세서 ----------
 
 @server.tool()
-def create_node(project_id: int, title: str, ctx: Context,
+def create_node(project_id: str, title: str, ctx: Context,
                 parent_id: int | None = None) -> dict:
     """기능 항목을 추가한다. parent_id 를 비우면 대분류로 만든다."""
     return _wrap(main.create_node, project_id,
@@ -136,7 +136,7 @@ def delete_node(node_id: int, ctx: Context) -> dict:
 # ---------- 용어 사전 ----------
 
 @server.tool()
-def list_terms(project_id: int, ctx: Context) -> list[dict]:
+def list_terms(project_id: str, ctx: Context) -> list[dict]:
     """용어 목록. 호출할 때 본문을 훑어 새 용어는 등록하고 쓰이지 않는 용어는 지운다.
     nodes 는 그 용어가 쓰인 기능 항목, in_prd 는 PRD 본문에 쓰였는지를 뜻한다."""
     return _wrap(main.list_terms, project_id, user=_user(ctx))
@@ -158,13 +158,13 @@ def set_term(term_id: int, ctx: Context, description: str | None = None,
 # ---------- 버전 ----------
 
 @server.tool()
-def save_version(project_id: int, ctx: Context) -> dict:
+def save_version(project_id: str, ctx: Context) -> dict:
     """현재 PRD 와 기능명세서를 함께 스냅샷으로 저장한다. 크게 고치기 전에 먼저 호출할 것."""
     return _wrap(main.save_version, project_id, user=_user(ctx))
 
 
 @server.tool()
-def list_versions(project_id: int, ctx: Context) -> list[dict]:
+def list_versions(project_id: str, ctx: Context) -> list[dict]:
     """저장된 버전 목록(저장 일시·저장한 사용자·항목 수)."""
     return _wrap(main.list_versions, project_id, user=_user(ctx))
 

@@ -1,4 +1,4 @@
-# PRD & 기능명세서 관리 데모
+# 얼개 플래너 (olgae-planner)
 
 제품 PRD 문서와 기능명세서(계층형 기능 트리)를 웹에서 **수정·추가·삭제**할 수 있는 데모 서비스입니다.
 기능명세서는 **트리 뷰**(가로형 마인드맵, 곡선 연결선)와 **디렉토리 뷰**(목록 + 문서 상세) 두 가지로 볼 수 있습니다.
@@ -66,7 +66,9 @@
   - 신규 가입: 허용/차단 토글, 가입 신청 목록, 등급을 골라 승인, 거절
   - 마지막 관리자 계정은 강등·삭제가 차단되고, 자기 계정은 삭제할 수 없음
 - **주소(라우팅)**
-  - `/` 내 프로젝트 · `/project/<id>` 프로젝트 · `/admin` 관리자
+  - `/` 내 프로젝트 · `/project/<slug>` 프로젝트 · `/admin` 관리자
+  - 프로젝트는 순번이 아니라 **랜덤 키(slug)** 로 가리킵니다 — 주소·API 모두
+    (`/project/k7mQ2xR9vBnP`, `/api/projects/k7mQ2xR9vBnP/prd`). 숫자 id 는 DB 내부에만 남습니다
   - 보고 있는 화면이 쿼리로 남습니다 — `?tab=spec`(기능명세서 탭) · `&view=dir`(디렉토리 뷰).
     없으면 각각 PRD 탭 · 트리 뷰가 기본
   - 공유 링크도 같은 규칙 — `/?share=<토큰>&tab=spec&view=dir`. 프로젝트 id 는 주소에 드러나지 않음
@@ -74,8 +76,23 @@
   - nginx 가 `try_files $uri /index.html` 로 모든 경로를 앱 셸로 넘깁니다(SPA)
   - `/admin` 은 앱 셸만 공개되고 데이터는 없습니다. `robots.txt` 로 `Disallow`,
     응답에 `X-Robots-Tag: noindex, nofollow` 를 붙여 색인을 막습니다
-- **프로젝트**
+- **프로젝트 / 멤버**
   - 사용자별로 여러 프로젝트 생성/이름 변경/삭제 (PRD와 기능 트리는 프로젝트 단위)
+  - **공유 링크는 읽기 전용**입니다. 링크가 유출되어도 내용이 바뀌지 않습니다
+  - 공유 링크로 들어온 로그인 사용자는 헤더의 **참여 요청** 버튼으로 참여를 신청
+  - 소유자·공동 소유자는 `멤버 관리`에서 승인/거절, 권한 변경, 멤버 제외
+  - 권한 5단계:
+
+    | 등급 | 할 수 있는 일 |
+    |---|---|
+    | 공유 링크 · 비로그인 | 읽기, 마크다운 내보내기 |
+    | 공유 링크 · 로그인(미승인) | 위 + 코멘트 |
+    | **편집자** | 위 + 내용 수정, 이미지 앨범, 버전 기록, MCP·플러그인으로 조회 |
+    | **공동 소유자** | 위 + 공유 링크 관리, 멤버 관리, 이름 변경 |
+    | 소유자 | 위 + 프로젝트 삭제 |
+
+  - 참여중인 프로젝트는 `내 프로젝트` 목록에 **소유자 이름과 권한**이 함께 표시되고,
+    권한에 따라 버튼이 달라집니다
   - 프로젝트 소유자만 접근 가능. 소유자가 **공유 링크**(`/?share=<token>`)를 생성하면 링크를 아는 누구나 열람·편집 가능, 링크 해제 시 즉시 차단
   - 구버전 DB(프로젝트 개념 이전 데이터)는 첫 기동 시 "기본 프로젝트"로 자동 마이그레이션 후 레거시 `prd` 테이블 제거
 
@@ -142,7 +159,12 @@ docker compose up -d --build
 | GET / POST | `/api/projects` | 내 프로젝트 목록 / 생성 (`{name}`) — 로그인 필요 |
 | PUT / DELETE | `/api/projects/{pid}` | 이름 변경 / 삭제 — 소유자만 |
 | POST / DELETE | `/api/projects/{pid}/share` | 공유 링크 생성 / 해제 — 소유자만 |
-| GET | `/api/shared/{token}` | 공유 토큰 → 프로젝트 정보 (공개) |
+| GET | `/api/shared/{token}` | 공유 토큰으로 프로젝트 확인 — 소유자 이름·내 참여 상태 포함 (공개) |
+| POST | `/api/projects/{pid}/join` | 참여 요청 (로그인 + 유효한 `share` 필요) |
+| GET | `/api/projects/{pid}/members` | 멤버·참여 요청 목록 — 공동 소유자 이상 |
+| POST | `/api/projects/{pid}/members/{uid}/approve` | 승인 (`{role}`: `editor`·`coowner`) — 공동 소유자 이상 |
+| PUT | `/api/projects/{pid}/members/{uid}/role` | 권한 변경 (`{role}`) — 공동 소유자 이상 |
+| DELETE | `/api/projects/{pid}/members/{uid}` | 거절·멤버 제외 — 공동 소유자 이상 |
 | GET / PUT | `/api/projects/{pid}/prd` | PRD 문서 조회/저장 (`{content}`) |
 | GET / POST | `/api/projects/{pid}/nodes` | 기능 노드 목록 / 생성 (`{parent_id, title}`) |
 | PUT | `/api/nodes/{id}` | 부분 수정 (`title/description/status/importance/sort_order/parent_id`) — 순환 이동·타 프로젝트 이동은 400 |
@@ -291,5 +313,9 @@ DB 구조는 [`doc/ERD.md`](doc/ERD.md) 에 관계도와 컬럼 설명이 있습
   (아니면 로그인 잠금이 프록시 IP 하나로 뭉쳐 모든 사용자가 함께 잠깁니다)
 - 신규 가입은 승인제를 유지하거나 관리자 페이지에서 차단
 - `MCP_ALLOWED_HOSTS` 에 배포 도메인 지정 (비우면 Host 검사가 꺼집니다)
-- 이미지는 URL 을 알면 인증 없이 열립니다 (`/api/images/<id>`, id 는 추측 불가)
+- 이미지는 URL 을 알면 인증 없이 열립니다(`/api/images/<id>`, id 는 128비트 난수)
+- 업로드는 PNG·JPEG·GIF·WebP 만 받고 앞바이트로 검증합니다(SVG 는 스크립트를 품을 수 있어 거부).
+  프로필 이미지(data URL)도 base64 이미지 형식만 허용합니다
+- nginx 가 `X-Content-Type-Options: nosniff` · `X-Frame-Options: DENY` ·
+  `Referrer-Policy: no-referrer` 를 붙입니다. CSP 는 인라인 핸들러가 많아 아직 없습니다
 - DB 백업 없음

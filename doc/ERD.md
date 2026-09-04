@@ -5,7 +5,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 기동 시 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 맞춥니다.
 **DB 구조를 바꾸면 이 문서도 함께 고칩니다** (규칙은 [`CLAUDE.md`](../CLAUDE.md) 참고).
 
-- 테이블 11개
+- 테이블 12개
 - 모든 콘텐츠(기능 트리·PRD·이미지·용어·버전)는 **프로젝트(`projects`) 단위**로 소속됩니다.
 
 ## 관계도
@@ -36,6 +36,13 @@ erDiagram
         timestamptz created_at "가입 신청 시각"
         text avatar "프로필 이미지(data URL)"
     }
+    project_members {
+        int project_id PK_FK "프로젝트"
+        int user_id PK_FK "참여자"
+        text role "권한 editor·coowner"
+        text status "상태 pending·active"
+        timestamptz created_at "요청 시각"
+    }
     settings {
         text key PK "설정 키 (signup_open)"
         text value "설정 값 (1·0)"
@@ -53,7 +60,8 @@ erDiagram
         timestamptz created_at "발급 시각"
     }
     projects {
-        serial id PK "프로젝트 ID"
+        serial id PK "프로젝트 ID(내부용)"
+        text slug UK "주소·API 에 쓰는 랜덤 키"
         int owner_id FK "소유자(사용자)"
         text name "프로젝트 이름"
         text prd "PRD 본문(마크다운)"
@@ -137,6 +145,28 @@ erDiagram
 | `created_at` | 가입 신청 시각 | timestamptz | NN | `now()` | 가입 신청 목록 정렬 기준 |
 | `avatar` | 프로필 이미지 | text | | | 128px 정사각형 data URL. 프런트에서 줄여 보내며 상한 200,000자 |
 
+### project_members — 프로젝트 참여자
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `project_id` | 프로젝트 | int | PK, FK → projects(id) CASCADE, NN | | |
+| `user_id` | 참여자 | int | PK, FK → users(id) CASCADE, NN | | |
+| `role` | 권한 | text | NN | `'editor'` | `editor` 편집자 · `coowner` 공동 소유자. 예전 `viewer` 행은 기동 시 `editor` 로 올림 |
+| `status` | 상태 | text | NN | `'pending'` | `pending` 승인 대기(아무 권한 없음) · `active` 멤버 |
+| `created_at` | 요청 시각 | timestamptz | NN | `now()` | 참여 요청 목록 정렬 기준 |
+
+권한은 5단계입니다. `access_level()` 한 곳에서 판정하고 `require()` 가 필요 등급과 비교합니다 —
+소유자 → `owner`, `status='active'` 인 멤버 → 그 `role`, 유효한 공유 토큰 → 로그인했으면
+`commenter` 아니면 `reader`, 그 밖 → 권한 없음.
+
+| 등급 | 읽기·내보내기 | 코멘트 | 내용 수정 · 앨범 · 버전 · MCP | 공유 링크 · 멤버 · 이름 변경 | 프로젝트 삭제 |
+|---|---|---|---|---|---|
+| `reader` (공유 링크 · 비로그인) | O | | | | |
+| `commenter` (공유 링크 · 로그인) | O | O | | | |
+| `editor` 편집자 | O | O | O | | |
+| `coowner` 공동 소유자 | O | O | O | O | |
+| `owner` 소유자 | O | O | O | O | O |
+
 ### settings — 서비스 설정
 
 | 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
@@ -173,11 +203,16 @@ erDiagram
 
 | 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
 |---|---|---|---|---|---|
-| `id` | 프로젝트 ID | serial | PK | 자동 증가 | |
+| `id` | 프로젝트 ID | serial | PK | 자동 증가 | **내부용**. 모든 FK 가 이 값을 참조하고 응답에는 내보내지 않음 |
+| `slug` | 주소 키 | text | UK (`projects_slug_idx`) | | 주소·API 에 쓰는 랜덤 키(`secrets.token_urlsafe(9)`, 12자). 예전 행은 기동 시 채움. 순번을 감추기 위한 것이고 권한 검사를 대신하지 않음 |
 | `owner_id` | 소유자 | int | FK → users(id) CASCADE | | NULL 허용 — 사용자가 없는 DB 를 이관할 때만 비게 됨 |
 | `name` | 프로젝트 이름 | text | NN | | |
 | `prd` | PRD 본문 | text | NN | `''` | 마크다운 전체. 별도 테이블이 아님 |
 | `share_token` | 공유 토큰 | text | | | 값이 있으면 `/?share=<token>` 으로 비소유자 접근 허용 |
+
+프로젝트를 가리키는 값은 **`slug` 하나**입니다 — 주소(`/project/<slug>`)·API(`/api/projects/<slug>/…`)·
+MCP 툴의 `project_id` 모두 slug 를 씁니다. `find_project()` 가 slug 를 내부 `id` 로 바꾸고,
+숫자를 주면 예전 id 로도 찾아 줍니다(오래된 북마크 호환).
 
 ### nodes — 기능명세서 항목 (트리)
 
@@ -250,7 +285,7 @@ erDiagram
 | `id` | 이미지 ID | text | PK | | URL-safe 난수 토큰. `/api/images/<id>` 로 서빙 |
 | `project_id` | 소속 프로젝트 | int | FK → projects(id) CASCADE, NN | | |
 | `mime` | MIME 타입 | text | NN | | `image/png` 등 |
-| `data` | 바이너리 | bytea | NN | | 파일시스템이 아닌 DB 에 저장. 한 장 5MB, 계정 총량은 등급별(`admin` 무제한 · `pro` 500MB · `member` 200MB · `guest` 50MB) |
+| `data` | 바이너리 | bytea | NN | | 파일시스템이 아닌 DB 에 저장. 한 장 5MB, 계정 총량은 등급별(`admin` 무제한 · `pro` 500MB · `member` 200MB · `guest` 50MB). PNG·JPEG·GIF·WebP 만 받고 업로드 시 앞바이트로 검증 |
 | `created_at` | 업로드 시각 | timestamptz | NN | `now()` | 앨범의 날짜 구분 기준 |
 
 본문은 이미지를 `![](/api/images/<id>)` **문자열로만** 참조하므로 FK 가 없습니다.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PRD & 기능명세서</title>
+<title>얼개 플래너</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background: #f4f4f2; color: #333; }
@@ -54,8 +54,15 @@
   .node-card {
     display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid #d5d5cf;
     border-radius: 9px; background: #fff; cursor: pointer; font-size: 14px; white-space: nowrap;
-    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    box-shadow: 0 1px 2px rgba(0,0,0,.04); position: relative;
   }
+  /* 카드 사이 빈 칸(TREE_GAP 20px)도 이 카드의 드롭 구간으로 잡는다.
+     의사 요소는 원래 요소로 히트 판정되므로 dragover 가 그대로 들어온다 */
+  .node-card::before, .node-card::after {
+    content: ''; position: absolute; left: 0; right: 0; height: 11px;   /* 1px 겹쳐 경계에 빈틈이 없게 */
+  }
+  .node-card::before { top: -11px; }
+  .node-card::after  { bottom: -11px; }
   .node-card:hover { border-color: #999; }
   .node-card.selected { outline: 2px solid #6b7fd7; }
   .dragover { outline: 2px dashed #6b7fd7 !important; outline-offset: 2px; }
@@ -98,6 +105,11 @@
   /* 드래그 중 놓일 위치 미리보기 */
   .drop-before { box-shadow: 0 -3px 0 0 #6b7fd7 !important; }
   .drop-after { box-shadow: 0 3px 0 0 #6b7fd7 !important; }
+  /* 트리뷰는 사이 공간이 넓으니 그 자리에 막대를 띄운다 */
+  .node-card.drop-before, .node-card.drop-after { box-shadow: 0 1px 2px rgba(0,0,0,.04) !important; }
+  .node-card.drop-before::before, .node-card.drop-after::after {
+    background: #6b7fd7; border-radius: 3px; height: 6px; margin: 2px 0;
+  }
   /* 로그인 폼이 헤더에 있어 알림도 화면 위쪽에 띄운다. 모달(z 200)보다 위 */
   #toast { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); z-index: 300;
     display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
@@ -242,10 +254,11 @@
 <body>
 <header>
   <div class="hgroup">
-    <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="PRD & 기능명세서" height="28"></button>
+    <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="얼개 플래너" height="28"></button>
     <b id="proj-name"></b>
     <button class="btn ibtn" id="btn-glossary" onclick="openGlossary()" title="용어 사전" aria-label="용어 사전"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5.2 8.5 4.5 6 4.5H3v14h3c2.5 0 4.5.7 6 2 1.5-1.3 3.5-2 6-2h3v-14h-3c-2.5 0-4.5.7-6 2z"/><path d="M12 6.5v12"/></svg></button>
     <button class="btn ibtn" id="btn-save" onclick="saveVersion()" title="현재 상태 저장 (PRD + 기능명세서)" aria-label="현재 상태 저장"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M8 4v5h6V4"/><path d="M8 21v-6h8v6"/></svg></button>
+    <span id="joinbox" style="display:flex;gap:8px;align-items:center"></span>
   </div>
   <div class="tabs" id="tabs">
     <button id="tab-prd" class="active" onclick="setTab('prd')">PRD</button>
@@ -281,6 +294,58 @@
 const STATUSES = ['기획 작성중', '기획 완료', '개발 중', '완료'];
 const MAX_DEPTH = 4;  // 대분류 > 중분류 > 소분류 > 세부
 let tab = 'prd', view = 'tree', nodes = [], selectedId = null, collapsed = new Set(), prdContent = '', prdEditing = false;
+
+// ---------- 프로젝트 권한 ----------
+// owner · editor(소유자와 동일한 권한) · viewer(읽기 전용). 공유 링크 방문자는 언제나 viewer
+// 멤버로 승인할 수 있는 등급
+const MEMBER_LABEL = { editor: '편집자', coowner: '공동 소유자' };
+// 화면에 보여 줄 등급 이름 (공유 링크 상태까지)
+const ROLE_TEXT = { owner: '소유자', coowner: '공동 소유자', editor: '편집자',
+                    commenter: '읽기 · 코멘트', reader: '읽기 전용' };
+const LEVEL = { reader: 0, commenter: 1, editor: 2, coowner: 3, owner: 4 };
+// 공유 링크로 들어왔더라도 이미 승인된 멤버면 그 권한을 쓴다 (join: owner·editor·viewer·pending·none)
+const myRole = () => {
+  if (!project) return 'reader';
+  // 공유 링크로 들어왔더라도 이미 승인된 멤버면 그 권한을 쓴다
+  if (shareToken) {
+    return ['owner', 'coowner', 'editor'].includes(project.join)
+      ? project.join : (auth ? 'commenter' : 'reader');
+  }
+  return project.my_role || 'owner';
+};
+const atLeast = need => !!project && LEVEL[myRole()] >= LEVEL[need];
+const canEdit = () => atLeast('editor');     // 내용 수정 · 이미지 앨범 · 버전 기록
+const canOwn = () => atLeast('coowner');     // 공유 링크 관리 · 멤버 관리 · 이름 변경
+function renderJoin() {
+  const el = document.getElementById('joinbox');
+  if (!el) return;
+  if (!shareToken || !project) { el.innerHTML = ''; return; }
+  const st = project.join || 'none';
+  el.innerHTML =
+    st === 'pending' ? '<span class="pill">참여 요청 승인 대기</span>'
+    : st === 'owner' ? '<span class="pill on">내 프로젝트</span>'
+    : MEMBER_LABEL[st] ? `<span class="pill on">멤버 · ${MEMBER_LABEL[st]}</span>`
+    : auth ? '<span class="pill">읽기 · 코멘트</span>'
+             + '<button class="btn primary" onclick="requestJoin()">참여 요청</button>'
+    : '<span class="pill">읽기 전용 · 로그인하면 코멘트와 참여 요청</span>';
+}
+async function requestJoin() {
+  try {
+    // api() 가 share 파라미터를 자동으로 붙인다
+    const r = await api(`/api/projects/${project.slug}/join`, { method: 'POST' });
+    project.join = r.status === 'active' ? (r.role || 'editor') : 'pending';
+    toast(r.status === 'pending'
+      ? '참여를 요청했습니다. 소유자가 승인하면 편집할 수 있습니다.'
+      : '이미 이 프로젝트의 멤버입니다.');
+    render();
+  } catch (e) { toast(e.detail || '참여 요청에 실패했습니다.'); }
+}
+
+function needEdit() {
+  if (canEdit()) return true;
+  toast('편집 권한이 필요합니다. 프로젝트 소유자에게 참여 승인을 요청하세요.');
+  return false;
+}
 let project = null, projects = [];
 let restoreScroll = () => {};
 let modalRender = null;
@@ -319,19 +384,22 @@ function versionsHTML() {
     : '<p style="color:#aaa;padding:14px 0">저장된 버전이 없습니다.</p>'}`;
 }
 async function openVersions() {
+  if (!needEdit()) return;
   moreOpen = false; render();
-  versions = await api(`/api/projects/${project.id}/versions`).catch(() => []);
+  versions = await api(`/api/projects/${project.slug}/versions`).catch(() => []);
   showModal(versionsHTML);
 }
 async function saveVersion() {
+  if (!needEdit()) return;
   try {
-    const v = await api(`/api/projects/${project.id}/versions`, { method: 'POST' });
-    versions = await api(`/api/projects/${project.id}/versions`);
+    const v = await api(`/api/projects/${project.slug}/versions`, { method: 'POST' });
+    versions = await api(`/api/projects/${project.slug}/versions`);
     if (!document.getElementById('modal').hidden) paintModal();   // 헤더 버튼으로도 부른다
     toast(`PRD 와 기능명세서를 저장했습니다 (항목 ${v.node_count}개)`);
   } catch (e) { toast(e.detail || '버전 저장 실패'); }
 }
 async function restoreVersion(id) {
+  if (!needEdit()) return;
   try {
     const r = await api(`/api/versions/${id}/restore`, { method: 'POST' });
     await openProjectData();                        // PRD 도 함께 되돌아온다
@@ -342,7 +410,7 @@ async function restoreVersion(id) {
 async function deleteVersion(id) {
   try {
     await api('/api/versions/' + id, { method: 'DELETE' });
-    versions = await api(`/api/projects/${project.id}/versions`);
+    versions = await api(`/api/projects/${project.slug}/versions`);
     paintModal();
   } catch (e) { toast(e.detail || '버전 삭제 실패'); }
 }
@@ -398,8 +466,9 @@ function renderAuth() {
 let profileOpen = false, profile = null;
 
 const USER_SVG = size => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>`;
+// src 는 남이 정한 값이 화면에 오는 경로다(코멘트 작성자 아바타). 반드시 이스케이프한다
 const avatarHTML = (src, size) => src
-  ? `<img src="${src}" alt="" style="width:${size}px;height:${size}px;object-fit:cover;display:block">`
+  ? `<img src="${esc(src)}" alt="" style="width:${size}px;height:${size}px;object-fit:cover;display:block">`
   : USER_SVG(Math.round(size * 0.8));
 
 // 남은 양을 채움 막대로 보여 준다. limit 이 null 이면 무제한
@@ -660,7 +729,7 @@ async function uploadImage(file) {
   if (!file || !file.type.startsWith('image/')) return null;
   if (file.size > 5 * 1024 * 1024) { toast('이미지는 5MB 이하만 올릴 수 있습니다'); return null; }
   toast('이미지 올리는 중…');
-  let url = `/api/projects/${project.id}/images`;
+  let url = `/api/projects/${project.slug}/images`;
   if (shareToken) url += '?share=' + encodeURIComponent(shareToken);
   const r = await fetch(url, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': file.type }, body: file });
   if (!r.ok) { toast((await r.json().catch(() => ({}))).detail || '이미지 업로드 실패'); return null; }
@@ -724,7 +793,7 @@ function matchesFilter(n) {
 }
 // 번호는 필터와 무관하게 유지되도록 원본 순서로 매긴 뒤 걸러낸다
 // 카드에서 바로 고르는 중요도 드롭다운
-const impSelect = n => `<select class="impsel imp${n.importance}" title="중요도" draggable="false"
+const impSelect = n => `<select class="impsel imp${n.importance}" title="중요도" draggable="false" ${canEdit() ? '' : 'disabled'}
       onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"
       onchange="event.stopPropagation();saveField(${n.id},'importance',+this.value)">${
       MOSCOW.map(m => `<option value="${m.v}" ${m.v === n.importance ? 'selected' : ''}>${m.ko}</option>`).join('')}</select>`;
@@ -780,8 +849,8 @@ const termOf = w => terms.find(t => t.term.toLowerCase() === String(w).toLowerCa
 async function loadTerms() {
   if (!project) return;
   [terms, termCats] = await Promise.all([
-    api(`/api/projects/${project.id}/terms`).catch(() => []),
-    api(`/api/projects/${project.id}/term-categories`).catch(() => []),
+    api(`/api/projects/${project.slug}/terms`).catch(() => []),
+    api(`/api/projects/${project.slug}/term-categories`).catch(() => []),
   ]);
 }
 
@@ -952,7 +1021,7 @@ async function addTermCat() {
   const name = el.value.trim();
   if (!name) return;
   try {
-    await api(`/api/projects/${project.id}/term-categories`, { method: 'POST',
+    await api(`/api/projects/${project.slug}/term-categories`, { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
     await loadTerms(); paintModal();
   } catch (e) { toast(e.detail || '카테고리 추가 실패'); }
@@ -984,6 +1053,7 @@ async function openGlossary() {
   showModal(glossaryHTML);
 }
 function editTermDesc(el, id) {
+  if (!needEdit()) return;
   const t = terms.find(x => x.id === id);
   if (!t) return;
   const box = document.createElement('textarea');
@@ -1182,7 +1252,7 @@ async function admProjects(uid) {
       ${info.projects.length ? info.projects.map(p => `<div class="vrow">
           <div style="flex:1"><b>${esc(p.name)}</b>
             <div style="font-size:12px;color:#888">기능 ${p.nodes}개 · 이미지 ${p.images}개${p.shared ? ' · 공유 링크 있음' : ''}</div></div>
-          <button class="btn danger" onclick="twoStep('admproj:${p.id}', () => admDeleteProject(${p.id}, ${uid}))">${askLabel('admproj:' + p.id, '삭제')}</button>
+          <button class="btn danger" onclick="twoStep('admproj:${p.slug}', () => admDeleteProject('${p.slug}', ${uid}))">${askLabel('admproj:' + p.slug, '삭제')}</button>
         </div>`).join('') : '<p style="color:#aaa;padding:12px 0">프로젝트가 없습니다.</p>'}
       <div class="btnrow"><button class="btn" onclick="closeModal()">닫기</button></div>`);
   } catch (e) { toast(e.detail || '조회 실패'); }
@@ -1280,13 +1350,14 @@ async function copyText(t) {
 }
 
 async function openAlbum() {
+  if (!needEdit()) return;
   moreOpen = false;
   album.open = true; album.sel = new Set();
   selectedId = null;                       // 상세 패널과 자리를 다투지 않게
   await loadAlbum();
 }
 async function loadAlbum() {
-  album.items = await api(`/api/projects/${project.id}/images`).catch(() => []);
+  album.items = await api(`/api/projects/${project.slug}/images`).catch(() => []);
   render();
 }
 function closeAlbum() { album.open = false; album.sel = new Set(); render(); }
@@ -1312,10 +1383,11 @@ async function albumCopyLink(e, id) {
 }
 
 async function albumDelete() {
+  if (!needEdit()) return;
   if (!album.sel.size) return toast('삭제할 이미지를 먼저 선택하세요.');
   const ids = [...album.sel];
   try {
-    const r = await api(`/api/projects/${project.id}/images/delete`, { method: 'POST',
+    const r = await api(`/api/projects/${project.slug}/images/delete`, { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     album.sel = new Set();
     await loadAlbum();
@@ -1371,6 +1443,7 @@ const DND = id => `draggable="true" ondragstart="dragStart(event,${id})" ondrage
 const GRIP = '<span class="grip" title="드래그하여 다른 항목 위로 옮기기">⠿</span>';
 const DROP = pid => `ondragover="dragOver(event,${pid})" ondragleave="dragLeave(event)" ondrop="dropOn(event,${pid})"`;
 function dragStart(e, id) {
+  if (!canEdit()) { e.preventDefault(); return; }   // 읽기 전용이면 드래그 자체를 막는다
   dragId = id;
   e.dataTransfer.effectAllowed = 'move';
   // setData 가 없으면 Firefox 등에서는 드래그 자체가 시작되지 않는다
@@ -1439,6 +1512,7 @@ async function dropOn(e, targetId) {
 }
 
 async function moveNode(id, dir) {
+  if (!needEdit()) return;
   const node = nodeById(id);
   const sibs = childrenOf(node.parent_id);
   const i = sibs.findIndex(s => s.id === id), j = i + dir;
@@ -1450,9 +1524,85 @@ async function moveNode(id, dir) {
       body: JSON.stringify({ sort_order: k }) })));
   setNodes(await reloadNodes()); render();
 }
-const MV = id => `<button class="mv" title="위로" onclick="event.stopPropagation();moveNode(${id},-1)">▲</button><button class="mv" title="아래로" onclick="event.stopPropagation();moveNode(${id},1)">▼</button>`;
+const MV = id => canEdit()
+  ? `<button class="mv" title="위로" onclick="event.stopPropagation();moveNode(${id},-1)">▲</button><button class="mv" title="아래로" onclick="event.stopPropagation();moveNode(${id},1)">▼</button>`
+  : '';
 
 // ---------- rendering ----------
+// ---------- 프로젝트 멤버 관리 (소유자) ----------
+let members = { pid: null, list: [] };
+const memRoleOptions = cur => Object.keys(MEMBER_LABEL)
+  .map(r => `<option value="${r}" ${r === cur ? 'selected' : ''}>${MEMBER_LABEL[r]}</option>`).join('');
+
+function memRow(m, pending) {
+  return `<div class="vrow">
+    <span class="cmt-av">${avatarHTML(m.avatar, 26)}</span>
+    <div style="flex:1">
+      <b>${esc(m.username)}</b>
+      <div style="font-size:12px;color:#888">${new Date(m.created_at).toLocaleString()}</div>
+    </div>
+    <select class="rolesel" id="mem-role-${m.user_id}" ${pending ? '' : `onchange="memRole(${m.user_id}, this.value)"`}>
+      ${memRoleOptions(m.role)}
+    </select>
+    ${pending ? `<button class="btn primary" onclick="memApprove(${m.user_id})">승인</button>` : ''}
+    <button class="btn danger" onclick="twoStep('mem:${m.user_id}', () => memRemove(${m.user_id}))">${askLabel('mem:' + m.user_id, pending ? '거절' : '삭제')}</button>
+  </div>`;
+}
+function membersHTML() {
+  const proj = projects.find(x => x.slug === members.pid);
+  const pend = members.list.filter(m => m.status === 'pending');
+  const act = members.list.filter(m => m.status === 'active');
+  return `<h3 style="margin-bottom:6px">${esc(proj ? proj.name : '')} · 멤버 관리</h3>
+    <p class="hint" style="margin:0 0 16px;line-height:1.7">
+      <b>편집자</b> — 내용 수정 · 이미지 앨범 · 버전 기록 · MCP/플러그인으로 조회<br>
+      <b>공동 소유자</b> — 위 전부 + 공유 링크 관리 · 멤버 관리 · 이름 변경<br>
+      공유 링크만 가진 사람은 읽기만(로그인하면 코멘트까지) 할 수 있고,
+      프로젝트 삭제는 소유자만 할 수 있습니다.</p>
+    <h4 style="font-size:13px;color:#888;margin:0 0 4px">참여 요청 ${pend.length}건</h4>
+    ${pend.length ? pend.map(m => memRow(m, true)).join('')
+      : '<p style="color:#aaa;padding:8px 0 14px">대기 중인 요청이 없습니다.</p>'}
+    <h4 style="font-size:13px;color:#888;margin:18px 0 4px">멤버 ${act.length}명</h4>
+    ${act.length ? act.map(m => memRow(m, false)).join('')
+      : '<p style="color:#aaa;padding:8px 0">아직 멤버가 없습니다. 공유 링크를 보내면 참여 요청을 받을 수 있습니다.</p>'}
+    <div class="btnrow" style="margin-top:16px"><button class="btn" onclick="closeModal()">닫기</button></div>`;
+}
+async function openMembers(pid) {
+  members.pid = pid;
+  await loadMembers();
+  showModal(membersHTML);
+}
+async function loadMembers() {
+  members.list = await api(`/api/projects/${members.pid}/members`)
+    .catch(e => { toast(e.detail || '멤버를 불러올 수 없습니다.'); return []; });
+}
+async function afterMemberChange(msg) {
+  await loadMembers();
+  await loadProjects();          // 목록의 대기 수·멤버 수를 갱신한다
+  paintModal(); render();
+  if (msg) toast(msg);
+}
+async function memApprove(uid) {
+  const sel = document.getElementById('mem-role-' + uid);
+  try {
+    await api(`/api/projects/${members.pid}/members/${uid}/approve`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: sel.value }) });
+    await afterMemberChange('참여를 승인했습니다.');
+  } catch (e) { toast(e.detail || '승인 실패'); }
+}
+async function memRole(uid, role) {
+  try {
+    await api(`/api/projects/${members.pid}/members/${uid}/role`, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
+    await afterMemberChange('권한을 바꿨습니다.');
+  } catch (e) { toast(e.detail || '권한 변경 실패'); }
+}
+async function memRemove(uid) {
+  try {
+    await api(`/api/projects/${members.pid}/members/${uid}`, { method: 'DELETE' });
+    await afterMemberChange('멤버에서 제외했습니다.');
+  } catch (e) { toast(e.detail || '삭제 실패'); }
+}
+
 // ---------- 라우팅 (/, /project/<id>, /admin) ----------
 // 화면 상태가 곧 주소다. render() 가 주소를 맞추고, 뒤로 가기는 주소가 상태를 맞춘다.
 // 보고 있는 화면(탭·뷰)을 쿼리로. 뷰 종류는 기능명세서 탭에서만 의미가 있다
@@ -1472,7 +1622,7 @@ function routePath() {
   if (admin.open) return '/admin';
   if (!project) return '/';
   const q = viewParams();
-  return '/project/' + project.id + (q.length ? '?' + q.join('&') : '');
+  return '/project/' + project.slug + (q.length ? '?' + q.join('&') : '');
 }
 let firstSync = true;
 function syncUrl() {
@@ -1496,9 +1646,9 @@ async function applyRoute() {
     }
     if (auth) toast('관리자만 볼 수 있는 화면입니다.');
   } else {
-    const m = location.pathname.match(/^\/project\/(\d+)/);
+    const m = location.pathname.match(/^\/project\/([^/?#]+)/);
     if (m && auth) {
-      const p = projects.find(x => x.id === +m[1]);
+      const p = projects.find(x => x.slug === decodeURIComponent(m[1]));
       if (p) {
         admin.open = false; project = p;
         collapsed = new Set(); commentCache.clear(); panelStamp = '';
@@ -1529,9 +1679,10 @@ function render() {
   const has = !!project;
   if (!editingName) document.getElementById('proj-name').textContent = has ? project.name : '';
   document.getElementById('btn-glossary').style.display = has ? 'inline-flex' : 'none';
-  document.getElementById('btn-save').style.display = has && auth ? 'inline-flex' : 'none';
+  document.getElementById('btn-save').style.display = has && auth && canEdit() ? 'inline-flex' : 'none';
+  renderJoin();
   const nameEl = document.getElementById('proj-name');
-  const canRename = has && !!auth && !shareToken;
+  const canRename = has && !!auth && !shareToken && canOwn();
   nameEl.classList.toggle('editable', canRename);
   nameEl.onclick = null;
   nameEl.ondblclick = canRename ? editProjectName : null;
@@ -1547,10 +1698,10 @@ function render() {
   mEl.style.display = showMenu ? 'block' : 'none';
   mEl.innerHTML = showMenu ? `<button class="btn ibtn" onclick="event.stopPropagation();toggleMore()" title="메뉴" aria-label="메뉴"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     ${moreOpen ? `<div class="fmenu" style="left:auto;right:0;min-width:210px">
-      ${has && auth ? `<div class="fitem act" onclick="openVersions()">버전 기록<br><small>PRD · 기능명세서 저장 · 이전 시점으로 되돌리기</small></div>` : ''}
+      ${has && auth && canEdit() ? `<div class="fitem act" onclick="openVersions()">버전 기록<br><small>PRD · 기능명세서 저장 · 이전 시점으로 되돌리기</small></div>` : ''}
       ${has ? `<div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>` : ''}
-      ${auth ? `<div class="fitem act" onclick="openPluginGuide()">플러그인 설치<br><small>AI 에이전트로 이 프로젝트 읽고 고치기</small></div>` : ''}
-      ${has ? `<div class="fitem act" onclick="openAlbum()">이미지 앨범<br><small>업로드한 이미지 보기 · 링크 복사 · 삭제</small></div>` : ''}
+      ${auth && (!shareToken || canEdit()) ? `<div class="fitem act" onclick="openPluginGuide()">플러그인 설치<br><small>AI 에이전트로 이 프로젝트 읽고 고치기</small></div>` : ''}
+      ${has && canEdit() ? `<div class="fitem act" onclick="openAlbum()">이미지 앨범<br><small>업로드한 이미지 보기 · 링크 복사 · 삭제</small></div>` : ''}
       ${auth && auth.role === 'admin' ? `<div class="fitem act" onclick="openAdmin()">관리자<br><small>계정 등급 · 가입 승인 · 프로젝트 관리</small></div>` : ''}
     </div>` : ''}` : '';
   const showTools = has && tab === 'spec';
@@ -1623,29 +1774,41 @@ function renderProjects(c) {
       <h2 style="font-size:20px">내 프로젝트</h2>
       <button class="btn primary" onclick="createProject()">+ 새 프로젝트</button>
     </div>
-    ${projects.map(p => `
+    ${projects.map(p => {
+      const mine = p.my_role === 'owner';                     // 삭제는 소유자만
+      const owns = mine || p.my_role === 'coowner';           // 공유 링크 · 멤버 · 이름 변경
+      return `
       <div style="display:flex;gap:8px;align-items:center;background:#fff;border:1px solid #e5e5e0;border-radius:10px;padding:14px 18px;margin-bottom:10px">
-        <a href="#" data-pname="${p.id}" style="flex:1;font-weight:600;font-size:15px;color:#333;text-decoration:none"
-           onclick="openProject(${p.id});return false">${esc(p.name)}</a>
-        ${p.share_token
+        <div style="flex:1;min-width:0">
+          <a href="#" data-pname="${p.slug}" style="font-weight:600;font-size:15px;color:#333;text-decoration:none"
+             onclick="openProject('${p.slug}');return false">${esc(p.name)}</a>
+          <div style="font-size:12px;color:#888;margin-top:3px">
+            ${mine
+              ? (p.members ? `멤버 ${p.members}명` : '나만 참여중')
+              : `${esc(p.owner)} 님의 프로젝트 · ${ROLE_TEXT[p.my_role] || ''}`}
+          </div>
+        </div>
+        ${owns ? (p.share_token
           ? `<button class="btn" onclick="copyShare('${p.share_token}')">링크 복사</button>
-             <button class="btn danger" onclick="twoStep('share:${p.id}', () => dropShare(${p.id}))">${askLabel('share:' + p.id, '링크 해제')}</button>`
-          : `<button class="btn" onclick="makeShare(${p.id})">공유 링크 생성</button>`}
-        <button class="btn" onclick="renameProject(${p.id})">이름 변경</button>
-        <button class="btn danger" onclick="twoStep('proj:${p.id}', () => deleteProject(${p.id}))">${askLabel('proj:' + p.id, '삭제')}</button>
-      </div>`).join('') || '<p style="color:#aaa">프로젝트가 없습니다. 새 프로젝트를 만드세요.</p>'}
+             <button class="btn danger" onclick="twoStep('share:${p.slug}', () => dropShare('${p.slug}'))">${askLabel('share:' + p.slug, '링크 해제')}</button>`
+          : `<button class="btn" onclick="makeShare('${p.slug}')">공유 링크 생성</button>`) : ''}
+        ${owns ? `<button class="btn" onclick="renameProject('${p.slug}')">이름 변경</button>` : ''}
+        ${owns ? `<button class="btn" onclick="openMembers('${p.slug}')">멤버 관리${p.pending ? ` <span class="pill off">${p.pending}</span>` : ''}</button>` : ''}
+        ${mine ? `<button class="btn danger" onclick="twoStep('proj:${p.slug}', () => deleteProject('${p.slug}'))">${askLabel('proj:' + p.slug, '삭제')}</button>` : ''}
+      </div>`;
+    }).join('') || '<p style="color:#aaa">프로젝트가 없습니다. 새 프로젝트를 만드세요.</p>'}
   </div>`;
 }
 async function loadProjects() { projects = auth ? await api('/api/projects').catch(() => []) : []; }
 async function openProjectData() {
   const [n, p] = await Promise.all([
-    api(`/api/projects/${project.id}/nodes`), api(`/api/projects/${project.id}/prd`)]);
+    api(`/api/projects/${project.slug}/nodes`), api(`/api/projects/${project.slug}/prd`)]);
   setNodes(n); prdContent = p.content;
   collapsed = allParentIds();      // 처음에는 전부 접힌 상태로 연다
   await loadTerms();
 }
-async function openProject(id) {
-  project = projects.find(p => p.id === id);
+async function openProject(slug) {
+  project = projects.find(p => p.slug === slug);
   admin.open = false;
   selectedId = null; collapsed = new Set();
   commentCache.clear(); panelStamp = '';
@@ -1658,14 +1821,15 @@ function goHome() {
 }
 function goProjects() {
   project = null; selectedId = null;
-  album.open = false;
+  admin.open = false;          // 관리자 화면에서 로고를 눌러도 목록으로 나가야 한다
+  album.open = false; closeModal();
   loadProjects().then(render);
 }
 async function createProject() {
   const np = await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: '새 프로젝트' }) });
   await loadProjects(); render();
-  renameProject(np.id);
+  renameProject(np.slug);
 }
 // 헤더의 프로젝트 이름을 그 자리에서 편집
 let editingName = false;
@@ -1687,11 +1851,11 @@ function editProjectName() {
     const name = box.value.trim();
     if (save && name && name !== project.name) {
       try {
-        await api('/api/projects/' + project.id, { method: 'PUT',
+        await api('/api/projects/' + project.slug, { method: 'PUT',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
         project.name = name;
         await loadProjects();
-        project = projects.find(x => x.id === project.id) || project;
+        project = projects.find(x => x.id === project.slug) || project;
       } catch (e) { toast(e.detail || '이름 변경 실패'); }
     }
     editingName = false;
@@ -1705,9 +1869,9 @@ function editProjectName() {
 }
 
 // 프로젝트 목록에서 이름을 그 자리에서 편집
-function renameProject(id) {
-  const el = document.querySelector(`[data-pname="${id}"]`);
-  const cur = projects.find(p => p.id === id);
+function renameProject(slug) {
+  const el = document.querySelector(`[data-pname="${slug}"]`);
+  const cur = projects.find(p => p.slug === slug);
   if (!el || !cur) return;
   const box = document.createElement('input');
   box.className = 'inline-edit';
@@ -1720,7 +1884,7 @@ function renameProject(id) {
     done = true;
     const name = box.value.trim();
     if (save && name && name !== cur.name) {
-      await api('/api/projects/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      await api('/api/projects/' + slug, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }) });
       await loadProjects();
     }
@@ -1732,16 +1896,16 @@ function renameProject(id) {
     else if (e.key === 'Enter') { e.preventDefault(); finish(true); }
   });
 }
-async function deleteProject(id) {
-  await api('/api/projects/' + id, { method: 'DELETE' });
+async function deleteProject(slug) {
+  await api('/api/projects/' + slug, { method: 'DELETE' });
   await loadProjects(); render();
 }
-async function makeShare(id) {
-  const r = await api(`/api/projects/${id}/share`, { method: 'POST' });
+async function makeShare(slug) {
+  const r = await api(`/api/projects/${slug}/share`, { method: 'POST' });
   await loadProjects(); render(); copyShare(r.share_token);
 }
-async function dropShare(id) {
-  await api(`/api/projects/${id}/share`, { method: 'DELETE' });
+async function dropShare(slug) {
+  await api(`/api/projects/${slug}/share`, { method: 'DELETE' });
   await loadProjects(); render();
 }
 function copyShare(token) {
@@ -1798,10 +1962,10 @@ function renderTree(c) {
     const closed = collapsed.has(n.id);
     const color = depth === 0 ? 'c' + (rootIdx % 7) : 'cchild';
     return `<div class="mm-branch">
-      <span class="node-card ${color} ${n.id === selectedId ? 'selected' : ''}" data-id="${n.id}" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼칩니다" ${DND(n.id)} ${DROP(n.id)}>
+      <span class="node-card ${color} ${n.id === selectedId ? 'selected' : ''}" data-id="${n.id}" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼치거나 접습니다" ${DND(n.id)} ${DROP(n.id)}>
         ${GRIP}<span>${esc(n.title)}</span><span class="num">${num}</span>
         ${impSelect(n)}
-        ${depth < MAX_DEPTH - 1 ? `<button class="addchild" title="하위 추가" onclick="event.stopPropagation();addNode(${n.id})">＋</button>` : ''}
+        ${depth < MAX_DEPTH - 1 && canEdit() ? `<button class="addchild" title="하위 추가" onclick="event.stopPropagation();addNode(${n.id})">＋</button>` : ''}
         ${MV(n.id)}
         ${kids.length ? `<button class="toggle" onclick="event.stopPropagation();toggleCollapse(${n.id})">${closed ? '▶' : '◀'}</button>` : ''}
       </span>
@@ -1816,9 +1980,9 @@ function renderTree(c) {
     <span class="node-card mm-root" data-id="root" ${DROP(null)} title="여기에 드롭하면 대분류가 됩니다">PRD</span>
     <div class="mm-children">${kidsHTML(roots, 0, ([n, num], y) => branch(n, num, 0, roots.findIndex(r => r[0].id === n.id), y))}
       ${roots.length ? '' : `<div class="mm-child"><span style="color:#aaa">${empty}</span></div>`}
-      <div class="mm-child">
+      ${canEdit() ? `<div class="mm-child">
         <span class="node-card ghost" data-id="ghost" onclick="addNode(null)"
-          title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</span></div></div>
+          title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</span></div>` : ''}</div>
   </div></div>`;
   drawLinks();
 }
@@ -1890,7 +2054,7 @@ function dirRowHTML({ n, num, depth }, i) {
   const closed = collapsed.has(n.id);
   return `
       <div class="dir-item ${depth ? 'child' : ''} ${depth === 0 && i > 0 ? 'dir-top' : ''} ${n.id === selectedId ? 'selected' : ''}"
-           data-id="${n.id}" style="margin-left:${depth * 22}px" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼칩니다" ${DND(n.id)} ${DROP(n.id)}>
+           data-id="${n.id}" style="margin-left:${depth * 22}px" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼치거나 접습니다" ${DND(n.id)} ${DROP(n.id)}>
         ${kids.length
           ? `<button class="toggle" title="${closed ? '펼치기' : '접기'}"
                onclick="event.stopPropagation();toggleCollapse(${n.id})">${closed ? '▶' : '▼'}</button>`
@@ -1915,7 +2079,9 @@ function paintDirList() {
     if (i < from) from = i;
     to = i + 1;
   }
-  const addRow = `<div class="dir-item dir-ghost" onclick="addNode(null)" title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</div>`;
+  const addRow = canEdit()
+    ? `<div class="dir-item dir-ghost" onclick="addNode(null)" title="클릭하면 대분류가 추가됩니다">＋ 대분류 추가</div>`
+    : '';
   if (!dirRows.length) {
     list.innerHTML = `<p style="color:#aaa;padding:12px 10px">${filterOn() ? '선택한 중요도에 해당하는 항목이 없습니다.' : ''}</p>` + addRow;
     return;
@@ -1978,9 +2144,9 @@ function detailBody(n, withClose) {
     <div class="desc-md" title="더블클릭하여 수정" ondblclick="descClick(event,this,${n.id})">
       ${md(n.description) || '<p class="ph">설명이 없습니다. 클릭하여 작성하세요.</p>'}</div>
     <div class="btnrow">
-      ${canAddChild(n) ? `<button class="btn" onclick="addNode(${n.id})">+ 하위 추가</button>` : ''}
+      ${canAddChild(n) && canEdit() ? `<button class="btn" onclick="addNode(${n.id})">+ 하위 추가</button>` : ''}
       <button class="btn danger" title="하위 항목까지 삭제됩니다"
-        onclick="twoStep('node:${n.id}', () => removeNode(${n.id}))">${askLabel('node:' + n.id, '삭제')}</button>
+        onclick="twoStep('node:${n.id}', () => removeNode(${n.id}))" ${canEdit() ? '' : 'hidden'}>${askLabel('node:' + n.id, '삭제')}</button>
       ${withClose ? `<button class="btn" onclick="closePanel()">닫기</button>` : ''}
     </div>
     <h3 style="margin:26px 0 6px;font-size:15px">코멘트</h3>
@@ -1999,12 +2165,14 @@ function detailBody(n, withClose) {
 
 // 링크는 브라우저가 열고, 용어는 용어 사전으로. 그 밖을 누르면 편집
 function descClick(e, el, id) {
+  if (!needEdit()) return;
   if (e.target.closest('a') || e.target.closest('.term')) return;
   editField(el, id, 'description');
 }
 
 // swap the rendered field for an editor in place; blur/Ctrl+Enter saves, Esc cancels
 function editField(el, id, field) {
+  if (!needEdit()) return;
   const n = nodeById(id);
   const multiline = field === 'description';
   const box = document.createElement(multiline ? 'textarea' : 'input');
@@ -2036,6 +2204,7 @@ function editField(el, id, field) {
 }
 
 async function saveField(id, field, value) {
+  if (!needEdit()) return;
   await api('/api/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ [field]: value }) });
   setNodes(await reloadNodes());
@@ -2111,6 +2280,7 @@ function renderPrd(c) {
 
 // 클릭한 지점을 마크다운 원문 위치로 옮겨 편집 화면을 연다
 function prdClickEdit(e) {
+  if (!needEdit()) return;
   if (e.target.closest('a')) return;              // 링크는 브라우저가 열도록
   if (e.target.closest('.term')) return;          // 용어 클릭은 용어 사전
   const block = e.target.closest('p,h1,h2,h3,h4,h5,h6,li');
@@ -2182,10 +2352,14 @@ function toggleCollapse(id) { collapsed.has(id) ? collapsed.delete(id) : collaps
 const hasKids = id => childrenOf(id).length > 0;
 const allParentIds = () => new Set(nodes.filter(n => hasKids(n.id)).map(n => n.id));
 function collapseAll() { collapsed = allParentIds(); render(); }
-// 더블클릭: 이 항목 아래를 끝까지 펼친다
+// 더블클릭: 하위를 끝까지 펼친다. 이미 펼쳐져 있으면 반대로 모두 접는다
 function expandSubtree(id) {
-  const walk = pid => childrenOf(pid).forEach(k => { collapsed.delete(k.id); walk(k.id); });
-  collapsed.delete(id); walk(id);
+  if (!hasKids(id)) return;
+  const ids = [id];
+  const walk = pid => childrenOf(pid).forEach(k => { if (hasKids(k.id)) ids.push(k.id); walk(k.id); });
+  walk(id);
+  const fold = !collapsed.has(id);
+  ids.forEach(i => fold ? collapsed.add(i) : collapsed.delete(i));
   render();
 }
 function expandAll() { collapsed = new Set(); render(); }
@@ -2219,9 +2393,10 @@ async function boot() {
   }
   render();
 }
-const reloadNodes = () => api(`/api/projects/${project.id}/nodes`);
+const reloadNodes = () => api(`/api/projects/${project.slug}/nodes`);
 async function addNode(parentId) {
-  const n = await api(`/api/projects/${project.id}/nodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  if (!needEdit()) return;
+  const n = await api(`/api/projects/${project.slug}/nodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ parent_id: parentId, title: parentId ? '새 하위 기능' : '새 대분류' }) });
   setNodes(await reloadNodes());
   // 새 항목의 중요도가 필터에서 꺼져 있으면 보이도록 켜 준다
@@ -2235,13 +2410,14 @@ async function addNode(parentId) {
   if (h1) { editField(h1, n.id, 'title'); document.querySelector('.inline-edit.title-edit')?.select(); }
 }
 async function removeNode(id) {
+  if (!needEdit()) return;
   await api('/api/nodes/' + id, { method: 'DELETE' });
   if (selectedId === id) selectedId = null;
   setNodes(await reloadNodes()); await loadTerms(); render();
 }
 async function savePrd() {
   prdContent = document.getElementById('prd-edit').value;
-  await api(`/api/projects/${project.id}/prd`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  await api(`/api/projects/${project.slug}/prd`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: prdContent }) });
   await loadTerms();
   prdEditing = false; render();

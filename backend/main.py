@@ -34,6 +34,9 @@ LOGIN_LOCK_STEPS = [30, 60, 180, 300, 600, 1800]   # 잠금이 반복될수록 �
 LOGIN_LOCK_RESET_H = 24          # 이만큼 조용하면 잠금 단계가 처음으로 돌아간다
 
 MAX_AVATAR_CHARS = 200_000       # 프로필 이미지(data URL) 길이 상한, 대략 150KB
+# data URL 은 base64 가 아니어도 되므로(`data:image/png,<임의 텍스트>`) 형식을 못 박는다.
+# 느슨하면 따옴표가 섞인 값이 저장돼 <img src="…"> 속성을 탈출한다
+AVATAR_RE = re.compile(r"^data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$")
 
 # 등급별 이미지 업로드 총량 (MB, None = 무제한). 프로젝트 소유자 기준으로 합산한다
 ROLE_UPLOAD_MB = {"admin": None, "pro": 500, "member": 200, "guest": 50}
@@ -50,6 +53,16 @@ def init_db():
             ALTER TABLE users ADD COLUMN IF NOT EXISTS role   text NOT NULL DEFAULT 'guest';
             ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active';
             ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+            -- 주소와 API 에 쓰는 랜덤 키. 순번이 드러나지 않게 한다 (내부 PK 는 숫자 유지)
+            ALTER TABLE projects ADD COLUMN IF NOT EXISTS slug text;
+            CREATE TABLE IF NOT EXISTS project_members (
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role text NOT NULL DEFAULT 'editor',    -- editor(편집자) · coowner(공동 소유자)
+                status text NOT NULL DEFAULT 'pending', -- pending(승인 대기) · active
+                created_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (project_id, user_id)
+            );
             CREATE TABLE IF NOT EXISTS settings (
                 key text PRIMARY KEY,
                 value text NOT NULL
@@ -169,11 +182,17 @@ def init_db():
             CREATE INDEX IF NOT EXISTS terms_category_id_idx   ON terms (category_id);
             CREATE INDEX IF NOT EXISTS term_categories_project_id_idx ON term_categories (project_id);
             CREATE INDEX IF NOT EXISTS versions_project_id_idx ON versions (project_id);
+            CREATE INDEX IF NOT EXISTS project_members_user_id_idx ON project_members (user_id);
+            -- 예전 'viewer' 멤버 등급은 없어졌다. 읽기 전용은 이제 공유 링크 상태이지 멤버가 아니다
+            -- CREATE TABLE IF NOT EXISTS 로는 기존 테이블의 기본값이 바뀌지 않는다
+            ALTER TABLE project_members ALTER COLUMN role SET DEFAULT 'editor';
+            UPDATE project_members SET role = 'editor' WHERE role NOT IN ('editor', 'coowner');
             CREATE INDEX IF NOT EXISTS sessions_user_id_idx    ON sessions (user_id);
             CREATE INDEX IF NOT EXISTS projects_owner_id_idx   ON projects (owner_id);
             CREATE INDEX IF NOT EXISTS users_status_idx         ON users (status);
             INSERT INTO settings (key, value) VALUES ('signup_open', '1')
                 ON CONFLICT (key) DO NOTHING;
+            CREATE UNIQUE INDEX IF NOT EXISTS projects_slug_idx ON projects (slug);
             -- 최초 부트스트랩: 관리자가 없으면 가장 오래된 계정을 관리자로 올린다
             UPDATE users SET role = 'admin', status = 'active'
              WHERE id = (SELECT min(id) FROM users)
@@ -182,6 +201,12 @@ def init_db():
             DELETE FROM sessions WHERE created_at < now() - interval '30 days';
             DELETE FROM login_attempts WHERE last_fail < now() - interval '24 hours';
         """)
+
+        # 예전 행에는 slug 가 없다. 행마다 다른 난수를 넣어야 하니 여기서 채운다
+        cur.execute("SELECT id FROM projects WHERE slug IS NULL")
+        for (i,) in cur.fetchall():
+            cur.execute("UPDATE projects SET slug = %s WHERE id = %s", (new_slug(), i))
+
 
 
 def rows_to_dicts(cur):
@@ -303,27 +328,94 @@ def upload_usage(cur, owner_id: int, role: str):
     return cur.fetchone()[0], (None if mb is None else mb * 1024 * 1024)
 
 
-def check_access(cur, project_id: int, user: dict | None, share: str | None):
-    """owner or valid share token may read/write project content."""
-    cur.execute("SELECT owner_id, share_token FROM projects WHERE id = %s", (project_id,))
+MEMBER_ROLES = ("editor", "coowner")   # 멤버로 승인할 수 있는 등급
+
+# 권한 5단계. 숫자가 클수록 많이 할 수 있다
+#   reader    공유 링크 · 비로그인 → 읽기, 마크다운 내보내기
+#   commenter 공유 링크 · 로그인   → 위 + 코멘트
+#   editor    편집자               → 위 + 내용 수정, 이미지 앨범, 버전 기록, MCP·플러그인 조회
+#   coowner   공동 소유자           → 위 + 공유 링크 관리, 멤버 관리, 이름 변경
+#   owner     소유자               → 위 + 프로젝트 삭제
+LEVELS = {"reader": 0, "commenter": 1, "editor": 2, "coowner": 3, "owner": 4}
+
+DENY = {
+    "commenter": "로그인이 필요합니다",
+    "editor": "편집 권한이 필요합니다. 프로젝트 소유자에게 참여 승인을 요청하세요.",
+    "coowner": "공동 소유자만 할 수 있습니다",
+    "owner": "프로젝트 소유자만 가능합니다",
+}
+
+
+def new_slug() -> str:
+    """주소에 쓰는 랜덤 키. 순번을 감추기 위한 것이고 권한 검사를 대신하지 않는다."""
+    return secrets.token_urlsafe(9)
+
+
+def find_project(cur, ref) -> tuple:
+    """slug(숫자를 주면 예전 id) 로 찾아 (id, owner_id, share_token) 을 돌려준다."""
+    if isinstance(ref, int) or str(ref).isdigit():
+        cur.execute("SELECT id, owner_id, share_token FROM projects WHERE id = %s", (int(ref),))
+    else:
+        cur.execute("SELECT id, owner_id, share_token FROM projects WHERE slug = %s", (str(ref),))
     row = cur.fetchone()
     if not row:
         raise HTTPException(404, "프로젝트가 없습니다")
-    owner_id, token = row
+    return row
+
+
+def access_level(cur, ref, user: dict | None, share: str | None) -> tuple:
+    """(프로젝트 id, 내 등급). 권한이 전혀 없으면 등급이 None."""
+    pid, owner_id, token = find_project(cur, ref)
     if user and user["id"] == owner_id:
-        return
+        return pid, "owner"
+    if user:
+        cur.execute("""SELECT role FROM project_members
+                       WHERE project_id = %s AND user_id = %s AND status = 'active'""",
+                    (pid, user["id"]))
+        m = cur.fetchone()
+        if m and m[0] in MEMBER_ROLES:
+            return pid, m[0]
     if share and token and secrets.compare_digest(share, token):
-        return
-    raise HTTPException(403, "접근 권한이 없습니다 (공유 링크가 필요합니다)")
+        # 공유 링크로 들어온 사람. 로그인해 두면 코멘트까지 쓸 수 있다
+        return pid, ("commenter" if user else "reader")
+    return pid, None
 
 
-def check_owner(cur, project_id: int, user: dict):
-    cur.execute("SELECT owner_id FROM projects WHERE id = %s", (project_id,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(404, "프로젝트가 없습니다")
-    if row[0] != user["id"]:
+def require(cur, ref, user: dict | None, share: str | None, need: str) -> int:
+    """need 등급 이상인지 확인하고 프로젝트의 내부 id 를 돌려준다."""
+    pid, level = access_level(cur, ref, user, share)
+    if not level:
+        raise HTTPException(403, "접근 권한이 없습니다 (공유 링크가 필요합니다)")
+    if LEVELS[level] < LEVELS[need]:
+        raise HTTPException(401 if need == "commenter" and not user else 403, DENY[need])
+    return pid
+
+
+def check_access(cur, ref, user: dict | None, share: str | None) -> int:
+    """읽기. 공유 링크만 있어도 된다."""
+    return require(cur, ref, user, share, "reader")
+
+
+def check_comment(cur, ref, user: dict | None, share: str | None) -> int:
+    """코멘트처럼 누가 했는지가 남는 작업. 로그인이 필요하다."""
+    return require(cur, ref, user, share, "commenter")
+
+
+def check_write(cur, ref, user: dict | None, share: str | None = None) -> int:
+    """내용 수정 · 이미지 앨범 · 버전 기록. 편집자 이상."""
+    return require(cur, ref, user, share, "editor")
+
+
+def check_own(cur, ref, user: dict | None, share: str | None = None) -> int:
+    """공유 링크 관리 · 멤버 관리 · 이름 변경. 공동 소유자 이상."""
+    return require(cur, ref, user, share, "coowner")
+
+
+def check_owner(cur, ref, user: dict) -> int:
+    pid, owner_id, _ = find_project(cur, ref)
+    if owner_id != user["id"]:
         raise HTTPException(403, "프로젝트 소유자만 가능합니다")
+    return pid
 
 
 def node_project(cur, node_id: int) -> int:
@@ -416,7 +508,7 @@ class AvatarIn(BaseModel):
 def set_avatar(body: AvatarIn, user: dict = Depends(current_user)):
     """프로필 이미지. 프런트에서 128px 로 줄여 보내므로 users 행에 data URL 로 둔다."""
     av = body.avatar or None
-    if av and not av.startswith("data:image/"):
+    if av and not AVATAR_RE.match(av):
         raise HTTPException(400, "이미지 파일만 등록할 수 있습니다")
     if av and len(av) > MAX_AVATAR_CHARS:
         raise HTTPException(413, "프로필 이미지가 너무 큽니다")
@@ -577,7 +669,7 @@ def admin_user_projects(uid: int, _: dict = Depends(admin_user)):
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "계정을 찾을 수 없습니다")
-        cur.execute("""SELECT p.id, p.name, p.share_token IS NOT NULL AS shared,
+        cur.execute("""SELECT p.slug, p.name, p.share_token IS NOT NULL AS shared,
                               (SELECT count(*) FROM nodes n WHERE n.project_id = p.id) AS nodes,
                               (SELECT count(*) FROM images i WHERE i.project_id = p.id) AS images
                        FROM projects p WHERE p.owner_id = %s ORDER BY p.id""", (uid,))
@@ -586,11 +678,10 @@ def admin_user_projects(uid: int, _: dict = Depends(admin_user)):
 
 
 @app.delete("/api/admin/projects/{pid}", status_code=204)
-def admin_delete_project(pid: int, _: dict = Depends(admin_user)):
+def admin_delete_project(pid: str, _: dict = Depends(admin_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM projects WHERE id = %s", (pid,))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "프로젝트를 찾을 수 없습니다")
+        real_id, _owner, _tok = find_project(cur, pid)
+        cur.execute("DELETE FROM projects WHERE id = %s", (real_id,))
 
 
 @app.get("/api/admin/settings")
@@ -627,10 +718,28 @@ class ProjectIn(BaseModel):
 
 @app.get("/api/projects")
 def list_projects(user: dict = Depends(current_user)):
+    """내가 만든 프로젝트 + 멤버로 참여중인 프로젝트. my_role 로 UI 를 나눈다."""
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT id, name, share_token FROM projects
-                       WHERE owner_id = %s ORDER BY id""", (user["id"],))
-        return rows_to_dicts(cur)
+        cur.execute("""
+            SELECT p.slug, p.name, p.share_token, u.username AS owner,
+                   CASE WHEN p.owner_id = %(uid)s THEN 'owner' ELSE m.role END AS my_role,
+                   (SELECT count(*) FROM project_members q
+                     WHERE q.project_id = p.id AND q.status = 'pending') AS pending,
+                   (SELECT count(*) FROM project_members q
+                     WHERE q.project_id = p.id AND q.status = 'active') AS members
+            FROM projects p
+            JOIN users u ON u.id = p.owner_id
+            LEFT JOIN project_members m
+                   ON m.project_id = p.id AND m.user_id = %(uid)s AND m.status = 'active'
+            WHERE p.owner_id = %(uid)s OR m.user_id IS NOT NULL
+            ORDER BY (p.owner_id = %(uid)s) DESC, p.id""", {"uid": user["id"]})
+        rows = rows_to_dicts(cur)
+    for r in rows:
+        if r["my_role"] == "editor":
+            r["share_token"] = None      # 공유 링크는 공동 소유자 이상만 다룬다
+        if r["my_role"] not in ("owner", "coowner"):
+            r["pending"] = 0             # 승인 대기 수는 멤버를 관리할 수 있는 사람만 본다
+    return rows
 
 
 @app.post("/api/projects", status_code=201)
@@ -642,51 +751,145 @@ def create_project(body: ProjectIn, user: dict = Depends(current_user)):
         if limit is not None and project_count(cur, user["id"]) >= limit:
             raise HTTPException(403, f"{user['role']} 등급은 프로젝트를 최대 {limit}개까지"
                                      " 만들 수 있습니다. 관리자에게 등급 상향을 요청하세요.")
-        cur.execute("""INSERT INTO projects (owner_id, name, prd) VALUES (%s, %s, %s)
-                       RETURNING id, name, share_token""",
-                    (user["id"], body.name.strip(), PRD_TEMPLATE))
+        cur.execute("""INSERT INTO projects (owner_id, name, prd, slug)
+                       VALUES (%s, %s, %s, %s)
+                       RETURNING slug, name, share_token""",
+                    (user["id"], body.name.strip(), PRD_TEMPLATE, new_slug()))
         return rows_to_dicts(cur)[0]
 
 
 @app.put("/api/projects/{pid}")
-def rename_project(pid: int, body: ProjectIn, user: dict = Depends(current_user)):
+def rename_project(pid: str, body: ProjectIn, user: dict = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_owner(cur, pid, user)
+        pid = check_own(cur, pid, user)
         cur.execute("UPDATE projects SET name = %s WHERE id = %s", (body.name.strip(), pid))
     return {"ok": True}
 
 
 @app.delete("/api/projects/{pid}", status_code=204)
-def delete_project(pid: int, user: dict = Depends(current_user)):
+def delete_project(pid: str, user: dict = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_owner(cur, pid, user)
+        pid = check_owner(cur, pid, user)
         cur.execute("DELETE FROM projects WHERE id = %s", (pid,))
 
 
 @app.post("/api/projects/{pid}/share", status_code=201)
-def create_share(pid: int, user: dict = Depends(current_user)):
+def create_share(pid: str, user: dict = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_owner(cur, pid, user)
+        pid = check_own(cur, pid, user)
         token = secrets.token_urlsafe(24)
         cur.execute("UPDATE projects SET share_token = %s WHERE id = %s", (token, pid))
         return {"share_token": token}
 
 
 @app.delete("/api/projects/{pid}/share", status_code=204)
-def delete_share(pid: int, user: dict = Depends(current_user)):
+def delete_share(pid: str, user: dict = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_owner(cur, pid, user)
+        pid = check_own(cur, pid, user)
         cur.execute("UPDATE projects SET share_token = NULL WHERE id = %s", (pid,))
 
 
 @app.get("/api/shared/{token}")
-def resolve_share(token: str):
+def resolve_share(token: str, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, name FROM projects WHERE share_token = %s", (token,))
+        cur.execute("""SELECT p.slug, p.name, u.username AS owner, p.owner_id, p.id
+                       FROM projects p JOIN users u ON u.id = p.owner_id
+                       WHERE p.share_token = %s""", (token,))
         rows = rows_to_dicts(cur)
         if not rows:
             raise HTTPException(404, "유효하지 않은 공유 링크입니다")
-        return rows[0]
+        pr = rows[0]
+        # 참여 버튼을 어떻게 보여줄지 판단할 재료: owner · editor · viewer · pending · none
+        join = "none"
+        if user:
+            if user["id"] == pr["owner_id"]:
+                join = "owner"
+            else:
+                cur.execute("""SELECT role, status FROM project_members
+                               WHERE project_id = %s AND user_id = %s""",
+                            (pr["id"], user["id"]))
+                m = cur.fetchone()
+                if m:
+                    join = m[0] if m[1] == "active" else "pending"
+        pr.pop("owner_id"); pr.pop("id")
+        pr["join"] = join
+        return pr
+
+
+# ---------- project members ----------
+class MemberRole(BaseModel):
+    role: str = "editor"
+
+
+def valid_role(role: str) -> str:
+    if role not in MEMBER_ROLES:
+        raise HTTPException(400, "권한은 editor 또는 coowner 여야 합니다")
+    return role
+
+
+@app.post("/api/projects/{pid}/join", status_code=201)
+def join_project(pid: str, share: str | None = None, user: dict = Depends(current_user)):
+    """공유 링크로 들어온 사람이 참여를 요청한다. 소유자가 승인해야 멤버가 된다."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid, owner_id, token = find_project(cur, pid)
+        if owner_id == user["id"]:
+            raise HTTPException(400, "내가 만든 프로젝트입니다")
+        if not (share and token and secrets.compare_digest(share, token)):
+            raise HTTPException(403, "유효한 공유 링크가 필요합니다")
+        cur.execute("""INSERT INTO project_members (project_id, user_id) VALUES (%s, %s)
+                       ON CONFLICT (project_id, user_id) DO NOTHING
+                       RETURNING status""", (pid, user["id"]))
+        row = cur.fetchone()
+        if row:
+            return {"status": row[0], "new": True}
+        cur.execute("""SELECT status, role FROM project_members
+                       WHERE project_id = %s AND user_id = %s""", (pid, user["id"]))
+        st, role = cur.fetchone()
+        return {"status": st, "role": role, "new": False}
+
+
+@app.get("/api/projects/{pid}/members")
+def list_members(pid: str, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_own(cur, pid, user)
+        cur.execute("""SELECT m.user_id, u.username, u.avatar, m.role, m.status, m.created_at
+                       FROM project_members m JOIN users u ON u.id = m.user_id
+                       WHERE m.project_id = %s
+                       ORDER BY (m.status = 'pending') DESC, m.created_at""", (pid,))
+        return rows_to_dicts(cur)
+
+
+@app.post("/api/projects/{pid}/members/{uid}/approve")
+def approve_member(pid: str, uid: int, body: MemberRole, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_own(cur, pid, user)
+        cur.execute("""UPDATE project_members SET role = %s, status = 'active'
+                       WHERE project_id = %s AND user_id = %s""",
+                    (valid_role(body.role), pid, uid))
+        if not cur.rowcount:
+            raise HTTPException(404, "참여 요청을 찾을 수 없습니다")
+    return {"ok": True}
+
+
+@app.put("/api/projects/{pid}/members/{uid}/role")
+def set_member_role(pid: str, uid: int, body: MemberRole, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_own(cur, pid, user)
+        cur.execute("""UPDATE project_members SET role = %s
+                       WHERE project_id = %s AND user_id = %s AND status = 'active'""",
+                    (valid_role(body.role), pid, uid))
+        if not cur.rowcount:
+            raise HTTPException(404, "멤버를 찾을 수 없습니다")
+    return {"ok": True}
+
+
+@app.delete("/api/projects/{pid}/members/{uid}", status_code=204)
+def remove_member(pid: str, uid: int, user: dict = Depends(current_user)):
+    """참여 요청 거절과 멤버 삭제를 겸한다."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_own(cur, pid, user)
+        cur.execute("DELETE FROM project_members WHERE project_id = %s AND user_id = %s",
+                    (pid, uid))
 
 
 # ---------- prd ----------
@@ -695,18 +898,18 @@ class PrdIn(BaseModel):
 
 
 @app.get("/api/projects/{pid}/prd")
-def get_prd(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+def get_prd(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_access(cur, pid, user, share)
         cur.execute("SELECT prd FROM projects WHERE id = %s", (pid,))
         return {"content": cur.fetchone()[0]}
 
 
 @app.put("/api/projects/{pid}/prd")
-def put_prd(pid: int, body: PrdIn, share: str | None = None,
+def put_prd(pid: str, body: PrdIn, share: str | None = None,
             user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         cur.execute("UPDATE projects SET prd = %s WHERE id = %s", (body.content, pid))
     return {"ok": True}
 
@@ -727,18 +930,18 @@ class NodeUpdate(BaseModel):
 
 
 @app.get("/api/projects/{pid}/nodes")
-def list_nodes(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+def list_nodes(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_access(cur, pid, user, share)
         cur.execute("SELECT * FROM nodes WHERE project_id = %s ORDER BY sort_order, id", (pid,))
         return rows_to_dicts(cur)
 
 
 @app.post("/api/projects/{pid}/nodes", status_code=201)
-def create_node(pid: int, body: NodeIn, share: str | None = None,
+def create_node(pid: str, body: NodeIn, share: str | None = None,
                 user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         if body.parent_id is not None and node_project(cur, body.parent_id) != pid:
             raise HTTPException(400, "다른 프로젝트의 항목 아래에는 추가할 수 없습니다")
         cur.execute(
@@ -759,7 +962,7 @@ def update_node(node_id: int, body: NodeUpdate, share: str | None = None,
         raise HTTPException(400, "no fields")
     with pool.connection() as conn, conn.cursor() as cur:
         pid = node_project(cur, node_id)
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         if "parent_id" in fields:
             new_pid = fields["parent_id"]
             if new_pid == node_id:
@@ -790,7 +993,7 @@ def update_node(node_id: int, body: NodeUpdate, share: str | None = None,
 def delete_node(node_id: int, share: str | None = None,
                 user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, node_project(cur, node_id), user, share)
+        check_write(cur, node_project(cur, node_id), user, share)
         cur.execute("DELETE FROM nodes WHERE id = %s", (node_id,))
 
 
@@ -830,9 +1033,9 @@ def sync_terms(cur, pid: int):
 
 
 @app.get("/api/projects/{pid}/terms")
-def list_terms(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+def list_terms(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_access(cur, pid, user, share)
         sync_terms(cur, pid)
         cur.execute("""
             SELECT t.id, t.term, t.description, t.category_id, t.sort_order,
@@ -855,7 +1058,7 @@ def update_term(tid: int, body: TermIn, share: str | None = None,
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "용어를 찾을 수 없습니다")
-        check_access(cur, row[0], user, share)
+        check_write(cur, row[0], user, share)
         fields = body.model_dump(exclude_unset=True)
         if not fields:
             raise HTTPException(400, "no fields")
@@ -871,21 +1074,21 @@ class CategoryIn(BaseModel):
 
 
 @app.get("/api/projects/{pid}/term-categories")
-def list_categories(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+def list_categories(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_access(cur, pid, user, share)
         cur.execute("SELECT id, name FROM term_categories WHERE project_id = %s ORDER BY id", (pid,))
         return rows_to_dicts(cur)
 
 
 @app.post("/api/projects/{pid}/term-categories", status_code=201)
-def create_category(pid: int, body: CategoryIn, share: str | None = None,
+def create_category(pid: str, body: CategoryIn, share: str | None = None,
                     user: dict | None = Depends(opt_user)):
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "카테고리 이름이 필요합니다")
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         cur.execute("""INSERT INTO term_categories (project_id, name) VALUES (%s, %s)
                        ON CONFLICT (project_id, name) DO UPDATE SET name = EXCLUDED.name
                        RETURNING id, name""", (pid, name))
@@ -900,7 +1103,7 @@ def delete_category(cid: int, share: str | None = None, user: dict | None = Depe
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "카테고리를 찾을 수 없습니다")
-        check_access(cur, row[0], user, share)
+        check_write(cur, row[0], user, share)
         cur.execute("DELETE FROM term_categories WHERE id = %s", (cid,))
 
 
@@ -909,9 +1112,9 @@ NODE_FIELDS = ("id", "parent_id", "title", "description", "status", "importance"
 
 
 @app.post("/api/projects/{pid}/versions", status_code=201)
-def save_version(pid: int, share: str | None = None, user: dict = Depends(current_user)):
+def save_version(pid: str, share: str | None = None, user: dict = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         cur.execute(f"SELECT {', '.join(NODE_FIELDS)} FROM nodes WHERE project_id = %s"
                     " ORDER BY sort_order, id", (pid,))
         snapshot = rows_to_dicts(cur)
@@ -926,9 +1129,9 @@ def save_version(pid: int, share: str | None = None, user: dict = Depends(curren
 
 
 @app.get("/api/projects/{pid}/versions")
-def list_versions(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+def list_versions(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         cur.execute("""SELECT id, username, created_at, jsonb_array_length(data) AS node_count
                        FROM versions WHERE project_id = %s ORDER BY created_at DESC""", (pid,))
         return rows_to_dicts(cur)
@@ -943,7 +1146,7 @@ def restore_version(vid: int, share: str | None = None, user: dict = Depends(cur
         if not row:
             raise HTTPException(404, "버전을 찾을 수 없습니다")
         pid, snapshot, prd = row
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         if prd is not None:
             cur.execute("UPDATE projects SET prd = %s WHERE id = %s", (prd, pid))
 
@@ -982,27 +1185,46 @@ def delete_version(vid: int, user: dict = Depends(current_user)):
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "버전을 찾을 수 없습니다")
-        check_owner(cur, row[0], user)
+        check_write(cur, row[0], user)
         cur.execute("DELETE FROM versions WHERE id = %s", (vid,))
 
 
 # ---------- images ----------
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+# Content-Type 헤더는 클라이언트가 정하는 값이라 믿을 수 없다. 실제 앞바이트로 확인한다.
+# SVG 는 스크립트를 품을 수 있어 아예 받지 않는다 (같은 출처로 서빙되므로 곧 XSS 가 된다)
+IMAGE_MAGIC = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+    "image/webp": (b"RIFF",),
+}
+
+
+def sniff_image(mime: str, data: bytes) -> str:
+    """허용 목록에 있고 앞바이트가 맞는 MIME 만 돌려준다."""
+    mime = mime.split(";")[0].strip().lower()
+    sigs = IMAGE_MAGIC.get(mime)
+    if not sigs:
+        raise HTTPException(400, "PNG · JPEG · GIF · WebP 만 올릴 수 있습니다")
+    if not any(data.startswith(sig) for sig in sigs):
+        raise HTTPException(400, "파일 내용이 이미지가 아닙니다")
+    if mime == "image/webp" and data[8:12] != b"WEBP":
+        raise HTTPException(400, "파일 내용이 이미지가 아닙니다")
+    return mime
 
 
 @app.post("/api/projects/{pid}/images", status_code=201)
-async def upload_image(pid: int, request: Request, share: str | None = None,
+async def upload_image(pid: str, request: Request, share: str | None = None,
                        user: dict | None = Depends(opt_user)):
-    mime = request.headers.get("content-type", "")
-    if not mime.startswith("image/"):
-        raise HTTPException(400, "이미지 파일만 올릴 수 있습니다")
     data = await request.body()
     if not data:
         raise HTTPException(400, "빈 파일입니다")
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "이미지는 5MB 이하만 올릴 수 있습니다")
+    mime = sniff_image(request.headers.get("content-type", ""), data)
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         # 총량은 프로젝트 소유자 기준 (공유 링크로 올려도 소유자 몫에서 차감된다)
         cur.execute("""SELECT p.owner_id, u.role FROM projects p
                        JOIN users u ON u.id = p.owner_id WHERE p.id = %s""", (pid,))
@@ -1016,7 +1238,7 @@ async def upload_image(pid: int, request: Request, share: str | None = None,
                 % (up_used // (1024 * 1024), up_limit // (1024 * 1024)))
         img_id = secrets.token_urlsafe(16)
         cur.execute("INSERT INTO images (id, project_id, mime, data) VALUES (%s, %s, %s, %s)",
-                    (img_id, pid, mime.split(";")[0], data))
+                    (img_id, pid, mime, data))
     return {"url": f"/api/images/{img_id}"}
 
 
@@ -1025,10 +1247,10 @@ class ImageIds(BaseModel):
 
 
 @app.get("/api/projects/{pid}/images")
-def list_images(pid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+def list_images(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     """앨범 목록. used = 본문(PRD·기능 설명)에서 링크로 쓰이는 중인지."""
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         cur.execute("""
             SELECT i.id, i.mime, i.created_at, length(i.data) AS bytes,
                    (EXISTS (SELECT 1 FROM projects p
@@ -1043,12 +1265,12 @@ def list_images(pid: int, share: str | None = None, user: dict | None = Depends(
 
 
 @app.post("/api/projects/{pid}/images/delete")
-def delete_images(pid: int, body: ImageIds, share: str | None = None,
+def delete_images(pid: str, body: ImageIds, share: str | None = None,
                   user: dict = Depends(current_user)):
     if not body.ids:
         raise HTTPException(400, "선택된 이미지가 없습니다")
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, pid, user, share)
+        pid = check_write(cur, pid, user, share)
         cur.execute("DELETE FROM images WHERE project_id = %s AND id = ANY(%s)"
                     " RETURNING length(data)", (pid, body.ids))
         sizes = [r[0] for r in cur.fetchall()]
@@ -1062,8 +1284,10 @@ def get_image(img_id: str):
         row = cur.fetchone()
     if not row:
         raise HTTPException(404, "이미지를 찾을 수 없습니다")
-    return Response(content=bytes(row[1]), media_type=row[0],
-                    headers={"Cache-Control": "public, max-age=31536000"})
+    mime = row[0] if row[0] in IMAGE_MAGIC else "application/octet-stream"
+    return Response(content=bytes(row[1]), media_type=mime,
+                    headers={"Cache-Control": "public, max-age=31536000",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 # ---------- comments ----------
@@ -1088,7 +1312,7 @@ def create_comment(node_id: int, body: CommentIn, share: str | None = None,
     if not body.content.strip():
         raise HTTPException(400, "empty comment")
     with pool.connection() as conn, conn.cursor() as cur:
-        check_access(cur, node_project(cur, node_id), user, share)
+        check_comment(cur, node_project(cur, node_id), user, share)
         cur.execute("""INSERT INTO comments (node_id, user_id, content)
                        VALUES (%s, %s, %s) RETURNING id, node_id, content, created_at""",
                     (node_id, user["id"], body.content.strip()))
