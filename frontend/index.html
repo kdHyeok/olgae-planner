@@ -1129,48 +1129,103 @@ const cmdBox = (key, text) => {
     <button class="btn" onclick="copyBlock('${key}')">복사</button></div>`;
 };
 
+// 플러그인·MCP 는 브라우저 세션이 아니라 계정별 API 토큰(olg_…)으로 붙는다.
+// 로그아웃해도 살아 있어야 하기 때문이다
+let ptok = { list: [], fresh: null };
+
+async function loadTokens() {
+  ptok.list = await api('/api/me/tokens').catch(() => []);
+}
+async function issueToken() {
+  try {
+    const r = await api('/api/me/tokens', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '플러그인' }) });
+    ptok.fresh = r.token;          // 전체 값은 이 응답에서만 볼 수 있다
+    await loadTokens(); paintModal();
+    toast('토큰을 발급했습니다. 지금 복사해 두세요.');
+  } catch (e) { toast(e.detail || '토큰 발급 실패'); }
+}
+async function dropToken(id) {
+  try {
+    await api('/api/me/tokens/' + id, { method: 'DELETE' });
+    ptok.fresh = null;
+    await loadTokens(); paintModal();
+    toast('토큰을 지웠습니다. 그 토큰을 쓰던 에이전트는 더 이상 접근할 수 없습니다.');
+  } catch (e) { toast(e.detail || '삭제 실패'); }
+}
+
 function pluginGuideHTML() {
   const url = location.origin + '/mcp';
-  const bash = `export OLGAE_URL=${url}\nexport OLGAE_TOKEN=${auth.token}`;
-  const pwsh = `$env:OLGAE_URL = "${url}"\n$env:OLGAE_TOKEN = "${auth.token}"`;
+  const tok = ptok.fresh || '<발급한 토큰>';
+  const bash = `export OLGAE_URL=${url}\nexport OLGAE_TOKEN=${tok}`;
+  const pwsh = `$env:OLGAE_URL = "${url}"\n$env:OLGAE_TOKEN = "${tok}"`;
   const install = `claude plugin marketplace add ${MARKETPLACE}\nclaude plugin install olgae-planner@${MARKETPLACE.split('/')[1]}`;
-  const mcpOnly = `claude mcp add --transport http olgae-planner ${url} -H "Authorization: Bearer ${auth.token}"`;
+  const mcpOnly = `claude mcp add --transport http olgae-planner ${url} -H "Authorization: Bearer ${tok}"`;
   const json = JSON.stringify({
-    mcpServers: { 'olgae-planner': { type: 'http', url, headers: { Authorization: 'Bearer ' + auth.token } } }
+    mcpServers: { 'olgae-planner': { type: 'http', url, headers: { Authorization: 'Bearer ' + tok } } }
   }, null, 2);
+  const when = v => v ? new Date(v).toLocaleString() : '아직 안 씀';
 
   return `<h3 style="margin-bottom:6px">플러그인 설치</h3>
     <p class="hint" style="margin:0 0 14px">AI 에이전트가 이 서비스의 PRD·기능명세서를 직접 읽고 고칠 수 있습니다.
-      플러그인에는 <b>MCP 연결</b>과 <b>본문 작성 규칙 스킬</b>이 함께 들어 있습니다.</p>
+      플러그인에는 <b>MCP 연결</b>과 <b>본문 작성 규칙 스킬</b>이 함께 들어 있습니다.
+      <b>${esc(auth.username)}</b> 님이 만든 프로젝트와 <b>멤버로 참여중인 프로젝트</b>가 모두 보이고,
+      할 수 있는 일은 화면에서와 똑같이 프로젝트별 권한을 따릅니다.</p>
 
-    <b style="font-size:13px">1. 토큰·주소를 환경변수로 둡니다</b>
+    <b style="font-size:13px">1. 토큰을 발급합니다</b>
+    <p class="hint" style="margin:4px 0 8px">계정 전용 토큰이라 <b>로그아웃해도 계속 씁니다</b>
+      (브라우저 로그인 세션과 별개입니다).</p>
+    <div style="margin-bottom:10px">
+      <button class="btn primary" onclick="issueToken()">+ 새 토큰 발급</button>
+    </div>
+    ${ptok.fresh ? cmdBox('fresh', ptok.fresh) +
+      `<p class="hint" style="margin:-8px 0 12px;color:#2f62c4">이 값은 지금만 보입니다.
+        창을 닫으면 다시 볼 수 없으니 복사해 두세요.</p>` : ''}
+    ${ptok.list.length ? ptok.list.map(t => `<div class="vrow">
+        <div style="flex:1">
+          <b style="font-family:ui-monospace,monospace;font-size:13px">${esc(t.masked)}</b>
+          <div style="font-size:12px;color:#888">${esc(t.name)} ·
+            발급 ${new Date(t.created_at).toLocaleDateString()} · 마지막 사용 ${when(t.last_used_at)}</div>
+        </div>
+        <button class="btn danger" onclick="twoStep('tok:${t.id}', () => dropToken(${t.id}))">${askLabel('tok:' + t.id, '삭제')}</button>
+      </div>`).join('') : '<p style="color:#aaa;font-size:13px;padding:6px 0 12px">발급된 토큰이 없습니다.</p>'}
+
+    <b style="font-size:13px;display:block;margin-top:18px">2. 토큰·주소를 환경변수로 둡니다</b>
     <p class="hint" style="margin:4px 0 6px">macOS·Linux (bash·zsh)</p>
     ${cmdBox('bash', bash)}
     <p class="hint" style="margin:4px 0 6px">Windows PowerShell</p>
     ${cmdBox('pwsh', pwsh)}
 
-    <b style="font-size:13px">2. 플러그인을 설치합니다 (Claude Code)</b>
+    <b style="font-size:13px">3. 플러그인을 설치합니다 (Claude Code)</b>
     ${cmdBox('install', install)}
     <p class="hint" style="margin:-8px 0 14px">설치 후 Claude Code 를 재시작하고,
       <code>/mcp</code> 에서 <code>plugin:olgae-planner:olgae-planner</code> 연결과
       <code>/plugin</code> 에서 스킬 <code>olgae-planner</code> 을 확인하세요.
-      저장소를 클론해 뒀다면 <code>claude plugin marketplace add ./</code> 로도 등록됩니다.</p>
+      목록에 <code>Connected</code> 로 떠도 토큰 검사를 통과한 것은 아닙니다 —
+      <code>list_projects</code> 를 한 번 호출해 보세요.</p>
 
-    <b style="font-size:13px">3. 플러그인 없이 MCP 만 붙이려면</b>
-    <p class="hint" style="margin:4px 0 6px">Claude Code — 같은 이름을 수동 등록하면 플러그인 설정을 가리므로
+    <b style="font-size:13px">4. 플러그인 없이 MCP 만 붙이려면</b>
+    <p class="hint" style="margin:4px 0 6px">같은 이름을 수동 등록하면 플러그인 설정을 가리므로
       둘 중 하나만 씁니다(<code>claude mcp remove olgae-planner</code> 로 정리).</p>
     ${cmdBox('mcpOnly', mcpOnly)}
     <p class="hint" style="margin:4px 0 6px">그 밖의 클라이언트(Cursor·Claude Desktop 등)는 설정 파일에 넣으세요.</p>
     ${cmdBox('json', json)}
 
-    <p class="hint" style="margin:12px 0 0">토큰은 <b>${esc(auth.username)}</b> 님의 로그인 세션입니다.
-      이 토큰을 가진 사람은 회원님의 모든 프로젝트를 읽고 고칠 수 있으니 공유하지 마세요.
-      로그아웃하면 즉시 무효가 되고, 그때는 환경변수를 다시 채워야 합니다.</p>
-    <p class="hint" style="margin:6px 0 0">쓸 수 있는 툴: 프로젝트 목록 · 명세 조회 · PRD 저장 ·
+    <p class="hint" style="margin:12px 0 0">토큰은 <b>${esc(auth.username)}</b> 님으로 행동하는 열쇠입니다.
+      가진 사람은 회원님 권한 안에서 프로젝트를 읽고 고칠 수 있으니 공유하지 마세요.
+      유출됐다면 위 목록에서 지우면 즉시 끊깁니다.</p>
+    <p class="hint" style="margin:6px 0 0">쓸 수 있는 툴 13개: 프로젝트 목록 · 명세 조회 · PRD 저장 ·
       항목 추가/수정/삭제 · 용어 사전 · 버전 저장/복원 · 코멘트</p>
     <div class="btnrow"><button class="btn" onclick="closeModal()">닫기</button></div>`;
 }
-function openPluginGuide() { moreOpen = false; render(); showModal(pluginGuideHTML); }
+
+async function openPluginGuide() {
+  moreOpen = false; render();
+  ptok.fresh = null;
+  await loadTokens();
+  showModal(pluginGuideHTML);
+}
 
 // ---------- 관리자 페이지 ----------
 const ROLE_LABEL = { admin: '관리자 (무제한)', pro: 'pro (5개)', member: 'member (3개)', guest: 'guest (1개)' };

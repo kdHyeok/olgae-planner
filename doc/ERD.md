@@ -5,7 +5,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 기동 시 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 맞춥니다.
 **DB 구조를 바꾸면 이 문서도 함께 고칩니다** (규칙은 [`CLAUDE.md`](../CLAUDE.md) 참고).
 
-- 테이블 12개
+- 테이블 13개
 - 모든 콘텐츠(기능 트리·PRD·이미지·용어·버전)는 **프로젝트(`projects`) 단위**로 소속됩니다.
 
 ## 관계도
@@ -42,6 +42,14 @@ erDiagram
         text role "권한 editor·coowner"
         text status "상태 pending·active"
         timestamptz created_at "요청 시각"
+    }
+    api_tokens {
+        text token PK "MCP·플러그인 토큰 (olg_…)"
+        serial id UK "목록·삭제용 번호"
+        int user_id FK "소유 계정"
+        text name "토큰 이름"
+        timestamptz created_at "발급 시각"
+        timestamptz last_used_at "마지막 사용 시각"
     }
     settings {
         text key PK "설정 키 (signup_open)"
@@ -166,6 +174,21 @@ erDiagram
 | `editor` 편집자 | O | O | O | | |
 | `coowner` 공동 소유자 | O | O | O | O | |
 | `owner` 소유자 | O | O | O | O | O |
+
+### api_tokens — MCP·플러그인 토큰
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `token` | 토큰 | text | PK | | `olg_` + `secrets.token_urlsafe(24)`. 접두어로 세션 토큰과 구분 |
+| `id` | 번호 | serial | UK | 자동 증가 | 목록·삭제에 쓰는 값. 토큰 자체를 다시 내보내지 않으려고 둠 |
+| `user_id` | 소유 계정 | int | FK → users(id) CASCADE, NN | | |
+| `name` | 토큰 이름 | text | NN | `'플러그인'` | 기기·용도 구분용 |
+| `created_at` | 발급 시각 | timestamptz | NN | `now()` | |
+| `last_used_at` | 마지막 사용 | timestamptz | | | 요청마다 쓰지 않고 **한 시간에 한 번만** 갱신 |
+
+`opt_user()` 가 `Bearer` 값의 접두어를 보고 `api_tokens`(olg_…) 와 `sessions` 중 어디를 볼지 고릅니다.
+브라우저 로그아웃은 `sessions` 만 지우므로 플러그인은 계속 동작하고,
+관리자 비밀번호 재설정은 두 테이블을 함께 지웁니다.
 
 ### settings — 서비스 설정
 
