@@ -5,7 +5,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 기동 시 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 맞춥니다.
 **DB 구조를 바꾸면 이 문서도 함께 고칩니다** (규칙은 [`CLAUDE.md`](../CLAUDE.md) 참고).
 
-- 테이블 17개
+- 테이블 19개
 - 모든 콘텐츠(기능 트리·PRD·이미지·용어·버전)는 **프로젝트(`projects`) 단위**로 소속됩니다.
 
 ## 관계도
@@ -27,9 +27,14 @@ erDiagram
     projects ||--o{ term_categories : "project_id"
     projects ||--o{ terms : "project_id"
     projects ||--o{ images : "project_id"
+    projects ||--o{ collections : "project_id · 커스텀 표"
+    projects ||--o{ items : "project_id · 표의 행"
+    collections ||--o{ items : "collection_id"
+    users |o--o{ items : "created_by · 만든 사람"
 
     nodes |o--o{ nodes : "parent_id · 상위 항목"
-    nodes ||--o{ comments : "node_id"
+    nodes |o--o{ comments : "node_id · 노드 코멘트"
+    items |o--o{ comments : "item_id · 행 코멘트"
     term_categories |o--o{ terms : "category_id · SET NULL"
 
     users {
@@ -118,13 +123,16 @@ erDiagram
         text slug UK "주소·API 에 쓰는 랜덤 키"
         int owner_id FK "소유자(사용자)"
         text name "프로젝트 이름"
-        text prd "PRD 본문(마크다운)"
+        text key "번호 앞부분 (PLNT)"
+        int next_seq "번호 카운터 (노드·행 공유)"
+        text prd "PRD 본문(마크다운) — legacy"
         text share_token "공유 링크 토큰(없으면 NULL)"
     }
     nodes {
         serial id PK "기능 항목 ID"
         int project_id FK "소속 프로젝트"
         int parent_id FK "상위 항목(대분류면 NULL)"
+        int seq "프로젝트 안 번호 (PLNT-14 의 14)"
         text title "제목"
         text description "설명(마크다운)"
         text status "진행 상태"
@@ -133,10 +141,33 @@ erDiagram
     }
     comments {
         serial id PK "코멘트 ID"
-        int node_id FK "대상 기능 항목"
+        int node_id FK "대상 기능 항목 (둘 중 하나)"
+        int item_id FK "대상 컬렉션 행 (둘 중 하나)"
         int user_id FK "작성자"
         text content "내용"
         timestamptz created_at "작성 시각"
+    }
+    collections {
+        serial id PK "컬렉션 ID"
+        int project_id FK "소속 프로젝트"
+        text key "안정 키 (prd·tasks·policies…)"
+        text title "화면 이름"
+        text view "document·table·board"
+        text board_by "board 그룹 기준 속성"
+        jsonb schema "속성 정의 배열"
+        int sort_order "순서"
+        bool builtin "템플릿에서 왔는지"
+    }
+    items {
+        serial id PK "행 ID"
+        int project_id FK "소속 프로젝트"
+        int collection_id FK "소속 컬렉션"
+        int seq "프로젝트 안 번호 (노드와 공유)"
+        jsonb props "속성 값"
+        int sort_order "순서"
+        timestamptz created_at "생성"
+        timestamptz updated_at "수정"
+        int created_by FK "만든 사람"
     }
     versions {
         serial id PK "버전 ID"
@@ -145,7 +176,8 @@ erDiagram
         text username "저장 당시 사용자 이름"
         timestamptz created_at "저장 시각"
         jsonb data "기능 트리 스냅샷"
-        text prd "그 시점의 PRD 본문"
+        text prd "그 시점의 PRD 본문 (legacy)"
+        jsonb collections "컬렉션·행 스냅샷"
     }
     term_categories {
         serial id PK "카테고리 ID"
@@ -180,7 +212,10 @@ erDiagram
 | `users` → `sessions`, `oauth_codes`, `oauth_tokens`, `projects`, `comments` | **함께 삭제** (CASCADE) |
 | `oauth_clients` → `oauth_requests`, `oauth_codes`, `oauth_tokens` | **함께 삭제** (CASCADE) |
 | `users` → `versions.user_id` | **NULL 로 바뀜** (SET NULL) — 기록은 `username` 으로 남음 |
-| `projects` → `nodes`, `versions`, `terms`, `term_categories`, `images` | **함께 삭제** (CASCADE) |
+| `projects` → `nodes`, `versions`, `terms`, `term_categories`, `images`, `collections`, `items` | **함께 삭제** (CASCADE) |
+| `collections` → `items` | **함께 삭제** (CASCADE) — 표를 지우면 행이 전부 사라짐 |
+| `items` → `comments.item_id` | **함께 삭제** (CASCADE) |
+| `users` → `items.created_by` | **NULL 로 바뀜** (SET NULL) |
 | `nodes` → 하위 `nodes` | **함께 삭제** (CASCADE) — 부모를 지우면 하위 트리 전체가 사라짐 |
 | `nodes` → `comments` | **함께 삭제** (CASCADE) |
 | `term_categories` → `terms.category_id` | **NULL 로 바뀜** (SET NULL) — 용어는 미분류로 남음 |
@@ -335,7 +370,9 @@ OAuth 로그인은 기존 `users.login_id`·비밀번호와 `login_attempts` 잠
 | `slug` | 주소 키 | text | UK (`projects_slug_idx`) | | 주소·API 에 쓰는 랜덤 키(`secrets.token_urlsafe(9)`, 12자). 예전 행은 기동 시 채움. 순번을 감추기 위한 것이고 권한 검사를 대신하지 않음 |
 | `owner_id` | 소유자 | int | FK → users(id) CASCADE | | NULL 허용 — 사용자가 없는 DB 를 이관할 때만 비게 됨 |
 | `name` | 프로젝트 이름 | text | NN | | |
-| `prd` | PRD 본문 | text | NN | `''` | 마크다운 전체. 별도 테이블이 아님 |
+| `key` | 번호 앞부분 | text | | | `PLNT-14` 의 `PLNT`. 2~5자 대문자 권장. 기동 시 없으면 `P`+id(36진수)로 채움. 바꿔도 링크는 `seq` 기준이라 안 깨짐. 전역 UNIQUE 아님 |
+| `next_seq` | 번호 카운터 | int | NN | `0` | `UPDATE … SET next_seq = next_seq + 1 RETURNING` 으로 원자 발급. 노드와 컬렉션 행이 **하나의 번호 공간**을 쓴다 |
+| `prd` | PRD 본문 (legacy) | text | NN | `''` | 마크다운 전체. **컬렉션 `prd` 의 첫 섹션 "기존 PRD" 로 옮겨졌고** 새 편집은 그쪽에서. 컬럼은 호환용으로 남김 |
 | `share_token` | 공유 토큰 | text | | | 값이 있으면 `/?share=<token>` 으로 비소유자 접근 허용 |
 
 프로젝트를 가리키는 값은 **`slug` 하나**입니다 — 주소(`/project/<slug>`)·API(`/api/projects/<slug>/…`)·
@@ -349,6 +386,7 @@ MCP 툴의 `project_id` 모두 slug 를 씁니다. `find_project()` 가 slug 를
 | `id` | 항목 ID | serial | PK | 자동 증가 | |
 | `project_id` | 소속 프로젝트 | int | FK → projects(id) CASCADE, NN | | |
 | `parent_id` | 상위 항목 | int | FK → nodes(id) CASCADE | | NULL 이면 대분류(1단계). 최대 4단계 |
+| `seq` | 프로젝트 안 번호 | int | (project_id, seq) 인덱스 | | 화면 표기 `<key>-<seq>`. 컬렉션 행과 번호를 공유하므로 DB UNIQUE 대신 `next_seq` 발급으로 고유성 보장. 기동 시 없는 노드는 id 순으로 채움 |
 | `title` | 제목 | text | NN | | |
 | `description` | 설명 | text | NN | `''` | 마크다운. `` `용어` `` · `![](…)` · `[이름](url)` 문법 사용 |
 | `status` | 진행 상태 | text | NN | `'기획 작성중'` | 기획 작성중 / 기획 완료 / 개발 중 / 완료 |
@@ -362,10 +400,45 @@ MCP 툴의 `project_id` 모두 slug 를 씁니다. `find_project()` 가 slug 를
 | 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
 |---|---|---|---|---|---|
 | `id` | 코멘트 ID | serial | PK | 자동 증가 | |
-| `node_id` | 대상 항목 | int | FK → nodes(id) CASCADE, NN | | |
+| `node_id` | 대상 기능 항목 | int | FK → nodes(id) CASCADE | | `item_id` 와 둘 중 하나는 있어야 함 (`comments_target_chk`) |
+| `item_id` | 대상 컬렉션 행 | int | FK → items(id) CASCADE | | 작업·정책 행에 달리는 코멘트. API·UI 는 2단계 |
 | `user_id` | 작성자 | int | FK → users(id) CASCADE, NN | | 본인만 삭제 가능 |
 | `content` | 내용 | text | NN | | |
 | `created_at` | 작성 시각 | timestamptz | NN | `now()` | |
+
+### collections — 커스텀 표 (노션의 데이터베이스)
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `id` | 컬렉션 ID | serial | PK | 자동 증가 | |
+| `project_id` | 소속 프로젝트 | int | FK → projects(id) CASCADE, NN | | |
+| `key` | 안정 키 | text | UK(project_id, key), NN | | `prd` · `tasks` · `policies` … 내보내기·MCP 가 쓰는 이름. 화면 제목을 바꿔도 유지 |
+| `title` | 화면 이름 | text | NN | | |
+| `view` | 기본 보기 | text | NN | `'table'` | `document`(섹션 카드) · `table` · `board`(칸반) |
+| `board_by` | 그룹 기준 | text | | | `board` 일 때 열을 만드는 select 속성의 key |
+| `schema` | 속성 정의 | jsonb | NN | `[]` | `[{key, label, type, options?, target?}]`. type 은 `text · md · select · checkbox · relation` |
+| `sort_order` | 순서 | int | NN | `0` | PRD 탭 안 섹션 순서 |
+| `builtin` | 기본 제공 | bool | NN | `false` | 템플릿에서 왔는지. 삭제 대신 숨김 권장 |
+
+프로젝트 생성 시 `prd`(view=document, 섹션 = 행)와 `tasks`(view=board) 만 심는다.
+정책·NFR·결정·테스트 등은 "+ 표 추가 → 템플릿"으로 필요할 때 만든다. 템플릿 목록은
+[PLAN-collections.md §5](PLAN-collections.md#5-기본-템플릿), 코드는 `main.py` 의 `COLLECTION_TEMPLATES`.
+
+### items — 컬렉션의 행 (노션의 페이지)
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `id` | 행 ID | serial | PK | 자동 증가 | 내부용 |
+| `project_id` | 소속 프로젝트 | int | FK → projects(id) CASCADE, NN | | 컬렉션을 거치지 않고 바로 프로젝트 단위 조회·번호 고유성 검사에 쓴다 |
+| `collection_id` | 소속 컬렉션 | int | FK → collections(id) CASCADE, NN | | |
+| `seq` | 프로젝트 안 번호 | int | UK(project_id, seq), NN | | 화면 표기 `<key>-<seq>`. **노드와 같은 번호 공간** — `[[PLNT-14]]` 가 노드일 수도 행일 수도 있다 |
+| `props` | 속성 값 | jsonb | NN | `{}` | `{속성key: 값}`. text·md → 문자열, select → 옵션 문자열, checkbox → bool, relation → `[seq, …]`. **검증은 API 에서**(jsonb 는 제약이 없다) |
+| `sort_order` | 순서 | int | NN | `0` | 컬렉션 안 순서 |
+| `created_at` / `updated_at` | 생성 / 수정 | timestamptz | NN | `now()` | |
+| `created_by` | 만든 사람 | int | FK → users(id) SET NULL | | |
+
+`view='document'` 인 컬렉션의 행은 **문서의 섹션**이다(`title`, `body`). 기존 `projects.prd` 는 기동 시
+첫 행 "기존 PRD" 의 `body` 로 옮겨졌다. 마이그레이션으로 옮긴 행은 `props.legacy_id`(예 `POL-07`) 를 보존한다.
 
 ### versions — PRD + 기능명세서 버전(스냅샷)
 
@@ -376,10 +449,14 @@ MCP 툴의 `project_id` 모두 slug 를 씁니다. `find_project()` 가 slug 를
 | `user_id` | 저장한 사용자 | int | FK → users(id) SET NULL | | 사용자가 삭제되면 NULL |
 | `username` | 저장 당시 이름 | text | NN | | 사용자 삭제 후에도 표시하기 위해 복사해 둠 |
 | `created_at` | 저장 시각 | timestamptz | NN | `now()` | |
-| `data` | 기능 트리 스냅샷 | jsonb | NN | | `nodes` 행 배열(`id, parent_id, title, description, status, importance, sort_order`) |
-| `prd` | PRD 스냅샷 | text | | | 그 시점의 `projects.prd` 본문 |
+| `data` | 기능 트리 스냅샷 | jsonb | NN | | `nodes` 행 배열(`id, parent_id, title, description, status, importance, sort_order, seq`) |
+| `prd` | PRD 스냅샷 (legacy) | text | | | 그 시점의 `projects.prd` 본문 |
+| `collections` | 컬렉션·행 스냅샷 | jsonb | | | `[{id, key, title, view, board_by, schema, sort_order, builtin, items:[{id, seq, props, sort_order}]}]`. NULL 이면 컬렉션이 없던 시절의 버전 — 복원 때 컬렉션은 건드리지 않음 |
 
 복원 시 살아 있는 항목은 `id` 를 유지(UPSERT)하여 코멘트가 보존되고, `projects.prd` 는 스냅샷으로 덮어씁니다.
+컬렉션·행도 같은 방식입니다 — 스냅샷에 없는 것은 지우고, 있는 것은 **`id`·`seq` 를 지켜** UPSERT 하므로
+`[[P1-14]]` 링크와 relation 이 깨지지 않습니다. 노드의 `seq` 도 스냅샷에 담기며, seq 가 없던 옛 스냅샷의 노드에는 복원 때 새 번호를 줍니다.
+복원 뒤 `projects.next_seq` 는 되살린 최대 번호 이상으로 맞춰집니다.
 
 `prd` 는 나중에 추가한 컬럼이라 NULL 을 허용합니다. `prd` 열이 없던 시절의 버전은
 컬럼을 추가하는 기동 때 **그 시점의 현재 PRD** 로 한 번 채워집니다(`UPDATE … WHERE prd IS NULL`, 멱등).
@@ -427,7 +504,9 @@ ERD 선으로 보이지 않지만 애플리케이션이 텍스트를 스캔해 �
 | 출처 | 대상 | 방법 |
 |---|---|---|
 | `projects.prd`, `nodes.description` 의 `![](/api/images/<id>)` | `images.id` | 앨범의 사용 여부(`used`) 판정 |
-| `projects.prd`, `nodes.description` 의 `` `용어` `` | `terms.term` | 용어 행 자동 생성·삭제, 사용처 이동 |
+| `projects.prd`, `nodes.description`, `items.props`(md 값) 의 `` `용어` `` | `terms.term` | 용어 행 자동 생성·삭제, 사용처 이동 (items 스캔은 1.9) |
+| `nodes.description`, `items.props`(md 값) 의 `[[<key>-<seq>]]` | `nodes.seq` 또는 `items.seq` | 인라인 링크 칩. 역참조("이걸 가리키는 것")는 텍스트 스캔으로 계산 (2단계) |
+| `items.props` 의 relation 속성 `[seq, …]` | `nodes.seq` 또는 `items.seq` | 구조적 링크. `schema.target` 이 있으면 그 컬렉션만. FK 가 아니라 삭제돼도 남는다 → 화면은 빗금 칩 |
 
 ## 인덱스
 
@@ -437,7 +516,9 @@ PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습�
 | 인덱스 | 대상 |
 |---|---|
 | `nodes_project_id_idx`, `nodes_parent_id_idx` | 트리 조회 · 하위 연쇄 삭제 |
-| `comments_node_id_idx`, `comments_user_id_idx` | 항목별 코멘트 |
+| `comments_node_id_idx`, `comments_item_id_idx`, `comments_user_id_idx` | 항목·행별 코멘트 |
+| `nodes_project_seq_idx`, `items (project_id, seq)` UK, `items_project_id_idx`, `collections_project_id_idx` | `[[번호]]` 해석 · 프로젝트별 표 |
+| `items_collection_idx` (collection_id, sort_order) | 컬렉션 안 행 목록 순서대로 |
 | `images_project_id_idx`, `terms_project_id_idx`, `terms_category_id_idx`, `term_categories_project_id_idx`, `versions_project_id_idx` | 프로젝트별 목록 |
 | `users_login_id_idx` | 로그인 ID 중복 방지 |
 | `sessions_user_id_idx`, `projects_owner_id_idx`, `oauth_codes_user_id_idx`, `oauth_tokens_user_id_idx` | 사용자 삭제 시 연쇄 |

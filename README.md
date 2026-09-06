@@ -53,15 +53,18 @@
   - `[표시이름](https://...)` → 하이퍼링크
   - 주소만 적어도 자동 링크(`[url](url)` 과 동일). 스킴 없는 `localhost:3000/...`·`example.com/...` 도 인식
   - 링크는 항상 새 탭에서 열림. `javascript:`·`data:` 같은 주소는 링크로 만들지 않음
-- **버전 기록 (PRD + 기능명세서)**
-  - 헤더의 **저장 아이콘**(용어 사전 옆) 한 번으로 현재 PRD와 기능 트리를 함께 스냅샷 저장
+- **버전 기록 (PRD 섹션 · 표 · 기능명세서)**
+  - 헤더의 **저장 아이콘**(용어 사전 옆) 한 번으로 PRD 섹션·모든 표(정책·작업 등)·기능 트리를 함께 스냅샷 저장
   - 헤더 메뉴 → `버전 기록`에서 목록 확인 · 저장 · 복원
-  - 목록에 **저장 일시 · 저장한 사용자 · 항목 수** 표시, `불러오기`로 그 시점으로 복원(두 번 클릭 확인)
+  - 목록에 **저장 일시 · 저장한 사용자 · 항목 수 · 표 행 수** 표시, `불러오기`로 그 시점으로 복원(두 번 클릭 확인)
+  - 복원해도 노드·표 행의 **번호(`P1-14`)와 id 가 그대로**라 링크와 코멘트가 깨지지 않음
   - 복원하면 PRD 본문도 그 시점으로 되돌아감. 살아남는 항목은 id 를 유지해 해당 항목의 코멘트가 보존됨
   - `prd` 컬럼 추가 이전에 저장된 버전은 컬럼이 생기는 기동 때의 PRD 로 채워짐
 - **내보내기**
-  - 헤더 `⋯` 메뉴의 **마크다운으로 내보내기** → PRD + 기능명세서 전체를 `<프로젝트명>.md` 파일로 저장
-  - 기능은 번호가 매겨진 헤딩(`### 1`, `#### 1.1`)과 상태·중요도 목록으로 출력, 이미지 주소는 절대경로로 변환
+  - 헤더 `⋯` 메뉴의 **마크다운으로 내보내기** → PRD 섹션 → 표 → 작업 → 기능명세서 순으로 `<프로젝트명>.md` 한 파일
+  - PRD 섹션은 `## 제목` + 본문. 표는 md 속성이 있으면 행마다 `### P1-14 · 제목` + `- 라벨: 값` + 본문, 전부 단순 값이면 마크다운 표
+  - 작업은 상태(할일/진행중/완료)별로 묶음. 기능은 번호 헤딩(`### 1`, `#### 1.1`) + `- ID: P1-14` + 상태·중요도
+  - `[[P1-14]]` 와 관련(relation) 값은 `[P1-14 제목](#p1-14)` **문서 안 앵커 링크**로 — GitHub·Obsidian 에서 눌러 이동. 이미지 주소는 절대경로
 - **관리자 페이지** (헤더 메뉴 → `관리자`, admin 등급만)
   - 계정 목록: 계정 정보(로그인 ID·이름·비밀번호)·등급 변경, 프로젝트 수/한도 확인, 계정 완전 삭제
   - 계정별 프로젝트 목록에서 개별 프로젝트 삭제
@@ -71,13 +74,24 @@
   - `/` 내 프로젝트 · `/project/<slug>` 프로젝트 · `/admin` 관리자
   - 프로젝트는 순번이 아니라 **랜덤 키(slug)** 로 가리킵니다 — 주소·API 모두
     (`/project/k7mQ2xR9vBnP`, `/api/projects/k7mQ2xR9vBnP/prd`). 숫자 id 는 DB 내부에만 남습니다
-  - 보고 있는 화면이 쿼리로 남습니다 — `?tab=spec`(기능명세서 탭) · `&view=dir`(디렉토리 뷰).
+  - 보고 있는 화면이 쿼리로 남습니다 — `?tab=spec`(기능명세서 탭) · `?tab=tasks`(작업 탭) · `&view=dir`(디렉토리 뷰).
+  - 기능·표 행·작업은 **프로젝트 키 + 번호**(`P1-14`)로 가리킵니다. 번호는 프로젝트 안에서 하나의 순번을 공유하고,
+    키는 공동 소유자 이상이 바꿀 수 있으며(`PUT /api/projects/{slug}/key`) 바꿔도 번호 기준 링크는 그대로입니다.
     없으면 각각 PRD 탭 · 트리 뷰가 기본
   - 공유 링크도 같은 규칙 — `/?share=<토큰>&tab=spec&view=dir`. 프로젝트 id 는 주소에 드러나지 않음
   - 새로고침·뒤로 가기·주소 복사가 그대로 동작(뒤로 가기는 탭·뷰까지 되돌림)
   - nginx 가 `try_files $uri /index.html` 로 모든 경로를 앱 셸로 넘깁니다(SPA)
   - `/admin` 은 앱 셸만 공개되고 데이터는 없습니다. `robots.txt` 로 `Disallow`,
     응답에 `X-Robots-Tag: noindex, nofollow` 를 붙여 색인을 막습니다
+- **PRD 구조화 · 커스텀 표(컬렉션) · 작업** — 설계와 결정은 [doc/PLAN-collections.md](doc/PLAN-collections.md)
+  - PRD 탭은 **표(컬렉션)의 모음**입니다. 기본 `PRD` 표는 섹션 문서(제목 + 마크다운 본문), 그 밖의 표는
+    속성(`text` · `md` · `select` · `checkbox` · `relation`)이 열인 표. 왼쪽 목차로 표 사이를 이동
+  - 기존 마크다운 PRD 는 첫 섹션 "기존 PRD" 로 그대로 보존. 안의 표(정책·NFR·미결정·테스트)는
+    `backend/migrate_prd_tables.py` 로 행으로 옮길 수 있고, 원래 ID(`POL-07`)는 `legacy_id` 로 남음
+  - 모든 행·기능에 `P1-14` 식 번호. 셀·본문은 더블클릭으로 그 자리에서 편집(Ctrl+Enter 저장 · Esc 취소), ▲▼ · 추가 · 삭제.
+    공유 링크(읽기 전용)에서는 편집 불가
+  - **작업 탭**: 기본 `tasks` 표(제목 · 상태 할일/진행중/완료 · 종류 에픽/작업/이슈 · 상위 · 관련 · 내용). 칸반 보기는 2단계
+  - 템플릿 표(정책·NFR·미결정·테스트·액터·흐름·타겟 사용자·기기·도메인)는 API 로 추가(`POST …/collections {key}`). 화면의 "+ 표 추가"는 3단계
 - **프로젝트 / 멤버**
   - 사용자별로 여러 프로젝트 생성/이름 변경/삭제 (PRD와 기능 트리는 프로젝트 단위)
   - **공유 링크는 읽기 전용**입니다. 링크가 유출되어도 내용이 바뀌지 않습니다
@@ -131,6 +145,8 @@ docker compose up --build -d
 - 첫 기동 시 백엔드가 테이블을 만들고 샘플 PRD/기능 트리를 자동 시드합니다.
 - 데이터는 `dbdata` 볼륨에 저장되어 컨테이너를 재시작해도 유지됩니다.
 - **처음 가입한 계정이 관리자**가 됩니다. 그 뒤의 가입은 관리자 승인을 받아야 로그인됩니다.
+- 기존 마크다운 PRD 안의 표(정책·NFR·미결정·테스트)를 컬렉션 행으로 옮기려면(선택):
+  `docker compose exec -T backend python migrate_prd_tables.py <slug>` 로 먼저 보고 `--apply` 로 적용, `--undo` 로 되돌립니다.
 
 ### 운영 명령
 
@@ -169,7 +185,14 @@ docker compose up -d --build
 | POST | `/api/projects/{pid}/members/{uid}/approve` | 승인 (`{role}`: `editor`·`coowner`) — 공동 소유자 이상 |
 | PUT | `/api/projects/{pid}/members/{uid}/role` | 권한 변경 (`{role}`) — 공동 소유자 이상 |
 | DELETE | `/api/projects/{pid}/members/{uid}` | 거절·멤버 제외 — 공동 소유자 이상 |
-| GET / PUT | `/api/projects/{pid}/prd` | PRD 문서 조회/저장 (`{content}`) |
+| GET / PUT | `/api/projects/{pid}/prd` | PRD 마크다운 조회/저장 (`{content}`) — legacy. 화면은 `prd` 컬렉션을 씀 |
+| GET / POST | `/api/projects/{pid}/collections` | 표 목록 / 표 추가 (`{key}` 만 주면 템플릿, 아니면 `{key, title, view, schema}`) — 편집자 이상 |
+| PUT / DELETE | `/api/collections/{cid}` | 표 이름·보기·`board_by`·속성 정의·순서 변경 / 삭제(행 CASCADE) — 편집자 이상 |
+| GET / POST | `/api/collections/{cid}/items` | 행 목록 / 행 추가 (`{props, after?}`) — 번호(seq) 자동 발급 |
+| PUT / DELETE | `/api/items/{iid}` | 행 속성 부분 수정 (`{props}`, 스키마에 없는 key 무시·타입 검증) / 삭제 |
+| POST | `/api/items/{iid}/move` | 같은 표 안에서 한 칸 위·아래 (`{dir}` = -1 또는 1) |
+| GET | `/api/projects/{pid}/resolve/{seq}` | 번호 → 기능 노드 또는 표 행 (`{kind, id, title, collection?, label}`) |
+| PUT | `/api/projects/{pid}/key` | 번호 앞부분 변경 (`{key}`, 대문자 2~5자) — 공동 소유자 이상 |
 | GET / POST | `/api/projects/{pid}/nodes` | 기능 노드 목록 / 생성 (`{parent_id, title}`) |
 | PUT | `/api/nodes/{id}` | 부분 수정 (`title/description/status/importance/sort_order/parent_id`) — 순환 이동·타 프로젝트 이동은 400 |
 | DELETE | `/api/nodes/{id}` | 삭제 (하위 노드 연쇄 삭제) |
@@ -179,9 +202,9 @@ docker compose up -d --build
 | PUT | `/api/terms/{tid}` | 용어 수정 (`{description?, note?, category_id?, sort_order?}`) |
 | GET / POST | `/api/projects/{pid}/term-categories` | 카테고리 목록 / 추가 (`{name}`) |
 | DELETE | `/api/term-categories/{cid}` | 카테고리 삭제 (용어는 미분류로 남음) |
-| GET / POST | `/api/projects/{pid}/versions` | 버전 목록 / 현재 PRD + 기능명세서 스냅샷 저장 (로그인 필요) |
-| POST | `/api/versions/{vid}/restore` | 해당 버전으로 복원 — PRD 도 함께 (로그인 필요) |
-| DELETE | `/api/versions/{vid}` | 버전 삭제 — 소유자만 |
+| GET / POST | `/api/projects/{pid}/versions` | 버전 목록(`node_count`·`item_count`) / PRD 섹션·표·기능명세서 스냅샷 저장 — 편집자 이상 |
+| POST | `/api/versions/{vid}/restore` | 해당 버전으로 복원 — 표·행·노드의 id·번호 유지 — 편집자 이상 |
+| DELETE | `/api/versions/{vid}` | 버전 삭제 — 편집자 이상 |
 | GET | `/api/projects/{pid}/images` | 앨범 목록 (`id, created_at, bytes, used`) |
 | POST | `/api/projects/{pid}/images/delete` | 선택 이미지 삭제 (`{ids: [...]}`) → `{deleted, bytes}` |
 | GET | `/api/auth/id-available?login_id=...` | 로그인 ID 중복 확인 (`{available}`) |

@@ -1,0 +1,346 @@
+# 계획: PRD 구조화 · 커스텀 표(컬렉션) · 작업판
+
+> **이 문서의 용도** — 다른 세션이 이 작업을 이어받을 때 처음 읽는 문서.
+> 결정은 바꾸지 않는 한 그대로 따르고, 작업은 아래 체크리스트를 위에서부터 진행한다.
+> 진행하면서 [진행 상태](#진행-상태) 절을 갱신한다. 결정을 바꾸면 그 이유를 [결정 사항](#3-결정-사항)에 덧붙인다.
+
+- 관련 문서: [ERD.md](ERD.md)(현재 DB), [../README.md](../README.md)(기능·API), [../plugin/skills/olgae-planner/SKILL.md](../plugin/skills/olgae-planner/SKILL.md)(본문 규칙)
+- 작업 규칙은 [../CLAUDE.md](../CLAUDE.md) 를 따른다 — DB 를 바꾸면 같은 작업 안에서 ERD 를 갱신, 커밋은 요청받을 때만.
+
+---
+
+## 1. 왜 하나
+
+PRD 가 마크다운 한 덩어리라 **기능명세서에서 "어떤 정책·요구를 위해 만든 기능인지" 가리킬 수 없다.**
+실측(프로젝트 `플래닛토리`, 2026-09-06):
+
+| 항목 | 개수 | 비고 |
+|---|---|---|
+| 핵심 정책 POL | 20 | PRD 2장, 마크다운 표 |
+| 비기능 요구사항 NFR | 15 | 6장 (처음 17로 적었던 것은 다른 곳의 `NFR-` 언급까지 센 값 — 1.10 에서 정정) |
+| 미결정 사항 DEC | 23 | 8장 |
+| 검수 시나리오 AT | 41 | 부록 A |
+| 기능 노드 | 20 | 기능명세서 |
+
+- PRD 9장에 **정책 추적표**가 손으로 유지되고 있다 — 정책 ↔ 기능 ID(`HOME-03`, `RES-02~05`) ↔ 검수(`AT-03~05`).
+- 그런데 그 기능 ID 는 기능명세서 노드 어디에도 없다(노드 설명에 `POL-` 언급 0건). PRD 안에서만 도는 ID 다.
+- 화면의 노드 ID `N-0014` 는 `nodes.id`(서비스 전체 일련번호)를 0 채움한 것. 프로젝트 순번을 slug 로 감춘 결정과 어긋난다.
+
+목표: **PRD 의 표 항목·작업·기능 모두에 프로젝트 안 고유 번호를 주고, 서로 `[[번호]]` 로 링크되게 한다.
+표는 노션처럼 필요할 때 만들 수 있고, 작업은 칸반으로 관리하며, 플러그인이 작업을 찾아 갱신할 수 있다.**
+
+---
+
+## 2. 기준 상태 (시작 시점)
+
+- 커밋 `ddee60a` (master). 작업 트리 클린.
+- 테이블 17개: `api_tokens, comments, images, login_attempts, nodes, oauth_clients, oauth_codes, oauth_requests, oauth_tokens, project_members, projects, sessions, settings, term_categories, terms, users, versions`
+- `projects(id, owner_id, name, prd, share_token, slug)` · `nodes(id, parent_id, title, description, status, importance, sort_order, project_id)` · `comments(id, node_id, user_id, content, created_at)`
+- 크기: `frontend/index.html` 2,607줄 · `backend/main.py` 1,649줄 · `backend/mcp_app.py` 437줄
+- 탭: **PRD** · **기능명세서**. 뷰: 트리 · 디렉토리. 편집 방식: 미리보기 기본, 더블클릭으로 그 자리 편집(폼 입력창 UI 금지 — 사용자가 거부한 방향).
+
+---
+
+## 3. 결정 사항
+
+번호는 바꾸지 않는다. 뒤집으려면 새 번호로 "D-n 을 대체" 라고 적는다.
+
+| # | 결정 | 이유 |
+|---|---|---|
+| **D1** | 프로젝트마다 **짧은 키**(2~5자 대문자, 예 `PLNT`)를 두고, 기능·표 행·작업이 **하나의 번호 시퀀스**를 공유한다. 표시는 `PLNT-14`. | 표를 자유롭게 만들수록 표별 접두어(`POL-07`) 관리가 마찰이 된다. 해석기가 하나면 된다. 지라·Linear·GitHub 방식. 종류는 칩 색으로 보인다. 기능이 대분류를 옮겨도 번호가 안 바뀐다. |
+| **D2** | 번호 발급은 `UPDATE projects SET next_seq = next_seq + 1 RETURNING next_seq`. | 원자적. `max+1` 은 동시 요청에서 겹친다. |
+| **D3** | 노드에도 `seq` 를 준다. 화면 `N-0014` → `PLNT-14`. | 링크는 양쪽에 주소가 있어야 양방향이 된다. 정책 옆 "쓰는 기능 N개"와 추적표 자동 생성이 여기에 달려 있다. 노드의 다른 동작(트리·드래그·중요도)은 건드리지 않는다. |
+| **D4** | 표는 **`collections`(정의) + `items`(행)** 두 테이블. 속성은 `schema jsonb`, 값은 `props jsonb`. | 사용자가 표와 속성을 만들 수 있어야 한다(노션형). 행은 jsonb 배열이 아니라 **진짜 행** — 순서·개별 삭제·참조 카운트가 필요. |
+| **D5** | 속성 타입은 처음엔 `text · md · select · checkbox · relation` 다섯. `list` 타입은 없다. | 숫자·날짜는 필요할 때. list 는 md 불릿이나 select 로 충분. |
+| **D6** | **고정**: 프로젝트·멤버·권한·**기능명세서 트리**·코멘트·이미지·용어·버전. **자유(컬렉션)**: PRD 서술 섹션, 정책·NFR·결정·테스트·액터·흐름, **작업**. | 기능 트리는 계층·드래그·MoSCoW·가상 스크롤이 붙어 있어 일반화하면 다 깨진다. 나머지는 프로젝트마다 있을 수도 없을 수도 있다. |
+| **D7** | PRD 서술도 컬렉션이다 — `view='document'` 인 `prd` 컬렉션, 행 하나 = 섹션 하나(`title`, `body` md). **기존 `projects.prd` 는 첫 행 "기존 PRD" 의 body 로 옮긴다.** 컬럼은 당장 지우지 않는다. | 별도 테이블이 필요 없다. 데이터 유실 없이 legacy 를 보존한다. |
+| **D8** | 작업판은 전용 테이블이 아니라 **builtin 컬렉션 `tasks`** + `board` 보기. | 담당자·기한을 붙일 때 속성 추가로 끝난다. MCP 툴이 컬렉션 공통 하나로 된다. |
+| **D9** | 링크는 두 형태, 해석기 하나. `relation` 속성 = seq 배열(조회 가능). md 본문 `[[PLNT-14]]` = 인라인 언급. 역참조는 텍스트 스캔(이미지 `used`·용어와 같은 방식). 느려지면 그때 물질화. | 코드베이스의 "FK 없이 텍스트로 이어지는 관계" 패턴을 따른다. |
+| **D10** | 탭은 **PRD · 기능명세서 · 작업** 셋. 정책·NFR 등 다른 컬렉션은 PRD 탭 안 섹션으로 놓인다(순서 조정 가능). | 작업판은 매일 여는 화면. 다른 컬렉션은 문서 맥락에 있어야 한다. 탭을 더 늘리면 "이건 어디?" 판단이 매번 생긴다. |
+| **D11** | 프로젝트 생성 시 `prd`(서술 섹션)와 `tasks` 만 심는다. 정책·NFR·결정·테스트·액터·흐름은 **"+ 표 추가 → 템플릿"** 으로 원할 때. | 안 쓰는 프로젝트에 빈 표가 없다. |
+| **D12** | 기존 PRD 의 POL 20·NFR 17·DEC 23·AT 41 은 **일회성 스크립트로 컬렉션 행으로 옮긴다.** | 안 옮기면 링크 대상이 없어 2단계가 빈 껍데기다. 표 형식이 규칙적이다(§7). |
+| **D13** | 내보내기는 계속 지원한다. **가져오기(md → DB)는 목표에서 뺀다.** | 사용자가 손으로 고친 md 를 구조로 되돌리는 건 다른 크기의 문제. |
+| **D14** | `[[ID]]` 문법. `` `용어` `` 와 겹치지 않고 `#` 처럼 제목과 충돌하지 않는다. | 정규식 한 줄. 위키 관례. |
+
+---
+
+## 4. 데이터 모델
+
+`init_db()` 는 기동마다 실행되므로 전부 멱등으로 쓴다.
+
+```sql
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS key text;        -- 'PLNT'. 전역 UNIQUE 는 두지 않는다(다른 소유자가 같은 키를 쓸 수 있음)
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS next_seq int NOT NULL DEFAULT 0;
+ALTER TABLE nodes    ADD COLUMN IF NOT EXISTS seq int;         -- 백필로 채운다. 고유성은 next_seq 발급으로 보장(items 와 번호 공유라 DB UNIQUE 로 못 건다)
+CREATE INDEX IF NOT EXISTS nodes_project_seq_idx ON nodes (project_id, seq);
+
+CREATE TABLE IF NOT EXISTS collections (
+    id          serial PRIMARY KEY,
+    project_id  int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    key         text NOT NULL,                 -- 'prd' · 'tasks' · 'policies' … 내보내기·MCP 에서 쓰는 안정 키
+    title       text NOT NULL,                 -- 화면 이름. 바꿔도 key 는 유지
+    view        text NOT NULL DEFAULT 'table', -- 'document' | 'table' | 'board'
+    board_by    text,                          -- board 일 때 그룹 기준 select 속성 key
+    schema      jsonb NOT NULL DEFAULT '[]',   -- [{key, label, type, options?, target?}]
+    sort_order  int NOT NULL DEFAULT 0,
+    builtin     bool NOT NULL DEFAULT false,   -- 템플릿에서 왔는지. 삭제 대신 숨김 권장
+    UNIQUE (project_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS items (
+    id            serial PRIMARY KEY,
+    project_id    int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    collection_id int NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    seq           int NOT NULL,                -- PLNT-<seq>. 노드와 번호 공유
+    props         jsonb NOT NULL DEFAULT '{}', -- {속성key: 값}
+    sort_order    int NOT NULL DEFAULT 0,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    created_by    int REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE (project_id, seq)
+);
+CREATE INDEX IF NOT EXISTS items_collection_idx ON items (collection_id, sort_order);
+
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS item_id int REFERENCES items(id) ON DELETE CASCADE;
+-- node_id 를 NULL 허용으로 바꾸고(조건부 ALTER), CHECK (node_id IS NOT NULL OR item_id IS NOT NULL) 를 이름 붙여 조건부 추가
+
+-- 2단계
+CREATE TABLE IF NOT EXISTS item_events (
+    id       serial PRIMARY KEY,
+    item_id  int NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    user_id  int REFERENCES users(id) ON DELETE SET NULL,
+    at       timestamptz NOT NULL DEFAULT now(),
+    prop     text NOT NULL,                    -- 바뀐 속성 key
+    before   jsonb,
+    after    jsonb
+);
+```
+
+### 속성 정의 (`schema` 원소)
+
+```json
+{ "key": "status", "label": "상태", "type": "select", "options": ["할일", "진행중", "완료"] }
+{ "key": "parent", "label": "상위", "type": "relation", "target": "tasks" }
+{ "key": "body",   "label": "내용", "type": "md" }
+```
+
+`target` 을 생략한 relation 은 아무것(노드 포함)을 가리킬 수 있다.
+`props` 값 형태: `text`·`md` → 문자열, `select` → 문자열(옵션 중 하나), `checkbox` → bool, `relation` → `[seq, …]`.
+**검증은 API 에서** 한다(jsonb 는 DB 제약이 없다). 스키마에 없는 key 는 버리고, select 는 옵션 밖 값을 거부한다.
+
+### 백필 (init_db 끝에서, 파이썬)
+
+1. `projects.key` 가 NULL 인 행: `P` + 프로젝트 id 를 36진수 대문자(예 `P1`, `PA`). 사용자가 나중에 바꿀 수 있다. 바꾸면 화면 표기만 바뀌고 링크는 seq 기준이라 안 깨진다.
+2. `nodes.seq` 가 NULL 인 행: 프로젝트별 `id` 순으로 1부터. 끝나면 `next_seq` 를 그 최대값으로.
+3. 컬렉션이 없는 프로젝트: `prd`·`tasks` 시드. `prd` 의 첫 행 body = `projects.prd`(비어 있지 않으면), title = "기존 PRD".
+
+---
+
+## 5. 기본 템플릿
+
+### 항상 심는 것 (D11)
+
+**`prd` — `view='document'`** · schema `[title:text, body:md]`
+행(섹션) 기본값, 순서대로: `기존 PRD`(legacy, 있을 때만) · `한 줄 정의` · `제품 목표` · `배경` · `사용자 문제` · `해결 방안` · `차별점` · `타겟 사용자` · `사용자 시나리오` · `접근 기기`
+
+**`tasks` — `view='board'`, `board_by='status'`**
+
+| key | label | type | options / target |
+|---|---|---|---|
+| title | 제목 | text | |
+| status | 상태 | select | 할일 · 진행중 · 완료 |
+| kind | 종류 | select | 에픽 · 작업 · 이슈 |
+| parent | 상위 | relation | tasks |
+| related | 관련 | relation | (아무것) |
+| body | 내용 | md | |
+
+에픽 카드에는 하위(`parent` 가 나를 가리키는 행) 완료 수 `3/7` 을 계산해 표시한다. 깊이는 고정하지 않는다.
+
+### "+ 표 추가 → 템플릿" 목록 (D11 · UI 는 3단계, 시드 함수는 1단계에서 만든다)
+
+| key | title | view | schema |
+|---|---|---|---|
+| policies | 핵심 정책 | table | policy:md |
+| nfr | 비기능 요구사항 | table | area:text, requirement:md |
+| decisions | 미결정 사항 | board(status) | topic:text, status:select[미결정·결정], default:md, decision:md |
+| tests | 테스트 시나리오 | table | scenario:md, expected:md, related:relation |
+| actors | 객체(액터) | table | actor:text, role:md |
+| flows | 전체 흐름 | table | acting:text, scenario:md |
+| target_users | 타겟 사용자 | table | user:text, purpose:md |
+| devices | 접근 기기 | table | value:text |
+| domains | 도메인 | table | value:text |
+| (빈 표) | 사용자 지정 | table | title:text |
+
+`tests` 는 논의에서 "기능에 붙어야 한다"고 봤지만, **1단계에서는 컬렉션으로 두고 `related` relation 으로 기능을 가리킨다.** 노드 하위 속성으로 옮기는 건 실제 사용을 보고 결정(§열린 질문).
+
+---
+
+## 6. ID · 링크 규칙
+
+- 표기: `<projects.key>-<seq>` → `PLNT-14`. 대소문자 무관하게 해석.
+- 해석: `seq` 로 `nodes` 와 `items` 를 둘 다 조회. 결과 `{kind: 'node'|'item', collection_key?, title, url}`.
+- URL: 노드 → `/project/<slug>?tab=spec&node=<seq>` · 컬렉션 행 → `/project/<slug>?tab=prd&item=<seq>` · 작업 → `?tab=tasks&item=<seq>`.
+- 인라인: md 안 `[[PLNT-14]]`. 렌더는 칩(종류별 색) — 호버 미리보기, 클릭 이동. **해석 실패는 빗금 칩**(조용히 사라지지 않게).
+- 구조: `relation` 속성 = `[14, 37]`(seq 배열). 화면은 칩 목록 + 추가(검색) + 제거.
+- 역참조("이걸 가리키는 것"): `nodes.description` · `items.props` 의 md 값 · relation 배열을 스캔. 정책 행 옆 "쓰는 기능 N개", 노드 상세 상단 "관련 PRD" 칩 줄. **삭제 시 참조 수를 보여주고 두 번 클릭 확인.**
+- 정책 추적표(PRD 9장)는 저장하지 않고 **이 역참조로 계산해 보여주는 뷰**다.
+
+---
+
+## 7. 마이그레이션: 기존 PRD 표 → 컬렉션 (D12)
+
+일회성 스크립트 `backend/migrate_prd_tables.py`(저장소에 두되 `init_db` 에서 부르지 않는다. `docker compose exec -T backend python migrate_prd_tables.py <slug> [--apply]`).
+
+소스 형식(실측). 각 표는 `| ID | … |` 헤더, `|---|` 구분선, 그 다음 행들:
+
+| 섹션 제목 | 헤더 | → 컬렉션 · 속성 |
+|---|---|---|
+| `## 2. 핵심 정책 (POL)` | `\| ID \| 정책 \|` | policies · policy |
+| `## 6. 비기능 요구사항 (NFR)` | `\| ID \| 분야 \| 요구사항 \|` | nfr · area, requirement |
+| `## 8. 미결정 사항 (DEC)` | `\| ID \| 항목 \| 현재 기본안 \|` | decisions · topic, default (status=미결정) |
+| `## 부록 A. 통합 검수 시나리오` | `\| ID \| 시나리오 \| 기대 결과 \|` | tests · scenario, expected |
+
+규칙:
+- 원래 ID(`POL-07`)는 **`props.legacy_id` 에 보존**하고 새 seq 를 발급한다. 화면엔 `PLNT-nn` 옆에 작게 `POL-07` 을 보여줄 수 있다(선택).
+- 옮긴 표 블록은 `prd` 첫 행 body 에서 **제거하지 않는다**(원본 보존). 대신 그 행 title 을 "기존 PRD (표는 컬렉션으로 옮겨짐)" 로 바꾼다.
+- **DRY RUN 이 기본**(`--apply` 없으면 몇 행을 어디로 옮길지만 출력). 실행 전 버전 저장.
+- 셀 안 `` `용어` `` 는 그대로 둔다 — `sync_terms` 가 items 를 스캔하면 자동으로 사전에 잡힌다.
+
+---
+
+## 8. 기존 지점 영향
+
+| 지점 | 지금 | 바뀌는 것 | 왜 |
+|---|---|---|---|
+| `nodes` | 전역 일련번호 | `seq` 열, 화면 `PLNT-14` | 정책→기능 방향 링크·추적표 자동화 |
+| `projects` | 이름·slug | `key`, `next_seq` | 번호 앞부분·발급 |
+| `versions` | `data`(노드) + `prd`(md) | `collections`·`items` 도 스냅샷. **복원 시 item id·seq 보존**(노드 복원이 id 를 지키는 것과 같은 UPSERT) | 번호가 바뀌면 링크가 다른 걸 가리킨다 |
+| `sync_terms` | `projects.prd` + 노드 설명 | `items.props` 의 md 값도 | 정책 본문의 용어가 사전에 잡히게 |
+| 이미지 `used` | prd + 노드 설명 검색 | items md 값도 | 정책에 붙인 이미지가 "미사용"으로 뜨지 않게 |
+| `comments` | node_id | `item_id` 추가, 둘 중 하나 | 작업 카드에 코멘트 |
+| 마크다운 내보내기 | prd + 트리 | 컬렉션 규칙(§9). `[[…]]` → 앵커 링크 | |
+| MCP `get_spec`·`set_prd` | prd 문자열 | `prd` 는 legacy 로 유지, 컬렉션 공통 툴 5개 추가 | |
+| `SKILL.md` | 본문 규칙 | `[[ID]]` 문법, 작업 처리 규칙 | CLAUDE.md 규칙 |
+| `ERD.md`·`README.md` | — | 테이블 2~3개, 문자열 참조 절에 `[[ID]]`·relation | CLAUDE.md 규칙 |
+| 라우팅 | `?tab=prd\|spec&view=…` | `tab=tasks`, `item=<seq>`, `node=<seq>` | 링크 클릭 이동 |
+
+---
+
+## 9. 마크다운 내보내기 규칙
+
+한 파일, 순서: PRD 컬렉션들 → 작업 → 기능명세서(기존 그대로).
+
+- `document` 컬렉션(prd): 행마다 `## {title}` + body.
+- 그 밖의 컬렉션: **md 속성이 하나라도 있으면** 행마다 `### {KEY}-{seq} · {첫 text 속성}` + `- 라벨: 값` 줄들 + md 본문. **전부 스칼라면** 마크다운 표.
+- 작업: 상태별 `### 할일 / 진행중 / 완료` 로 묶고 위 규칙.
+- `[[PLNT-14]]` 와 relation → `[PLNT-14 제목](#plnt-14)`. 각 행·노드 제목에 `<a id="plnt-14"></a>` 앵커.
+- 가져오기는 하지 않는다(D13).
+
+---
+
+## 10. 작업 계획
+
+각 항목은 **완료 조건**이 있고, 끝나면 `[x]` 로 바꾼다. 파일명은 현재 구조 기준(단일 파일 백엔드·프런트).
+
+### 1단계 — 그릇 (데이터 모양이 굳는다. 가장 신중하게)
+
+- [x] **1.1 스키마·백필** — `backend/main.py` `init_db()`: §4 DDL, §4 백필 3개. `doc/ERD.md` 갱신(관계도·삭제 규칙·상세 표·인덱스·문자열 참조).
+  완료: 기동 후 `\d collections`, `\d items` 정상 · 기존 프로젝트에 `prd`·`tasks` 컬렉션과 legacy 섹션 생김 · 모든 노드에 seq · `next_seq` = 최대 seq.
+  _2026-09-06 확인: 테이블 19개, 프로젝트 1 → key `P1`, 노드 19개 전부 seq, `prd` 10섹션(seq 20~29, "기존 PRD" 11,432자), `tasks` 빈 board, `comments_target_chk` 생성._
+- [x] **1.2 번호 발급·해석 API** — `alloc_seq(cur, pid)` 헬퍼, `GET /api/projects/{slug}/resolve/{seq}` (노드·행 공통 해석, §6 형태), `PUT /api/projects/{slug}/key` (공동 소유자 이상). `create_node` 가 seq 부여. `create_project` 가 `project_key()` 로 키 부여 + `seed_collections()`.
+  완료: 새 노드 생성 시 seq 부여 · 해석 API 가 노드/행 구분 응답.
+  _2026-09-06 확인: 새 노드 seq 30 · `/resolve/1` → node · `/resolve/20` → item(prd, "기존 PRD") · 9999 → 404 · key `1x` → 400, `plnt` → `PLNT` · 목록·공유 응답에 `key`. 1.4 의 백엔드 부분(응답 `key`)도 여기서 끝냄._
+- [x] **1.3 컬렉션·행 API** — `GET/POST /api/projects/{slug}/collections`, `PUT/DELETE /api/collections/{cid}`(스키마·제목·보기·board_by·순서), `GET/POST /api/collections/{cid}/items`(`after` 로 위치 지정), `PUT/DELETE /api/items/{iid}`, `POST /api/items/{iid}/move`(`{dir:±1}`, 노드 ▲▼ 와 같은 방식). `validate_schema`·`validate_props` 가 §4 규칙 검증. 권한: 읽기 `check_access`, 쓰기 `check_write`. 요청 본문은 pydantic 모델 대신 `dict`(속성 이름 `schema` 가 pydantic 예약어라).
+  완료: curl 로 정책 표 만들기 → 행 3개 → select 옵션 밖 값 400 → 삭제.
+  _2026-09-06 확인: 템플릿 표(policies) · 사용자 정의 표(board, 속성 5종) · 같은 key 409 · 잘못된 key/옵션 없는 select 400 · 행 3개(seq 31~33) · select 밖·relation 문자열·스키마 밖 key 400 · 부분 수정 · 이동 · 삭제 · board_by 가 select 아니면 400 · 표 삭제 CASCADE. 끝 상태 = 시작 상태._
+- [x] **1.4 노드 화면 ID** — `detailBody()` 의 `N-0014` → `${project.key}-${n.seq}` (title 에 `[[P1-14]]` 링크 힌트). `GET /api/projects` 와 `/api/shared` 응답에 `key` 포함(1.2 에서).
+  완료: 트리·디렉토리 상세에 `PLNT-14`.
+  _2026-09-06 브라우저 확인: 디렉토리 뷰 첫 노드 상세에 `P1-1`, title `[[P1-1]]`. `detailBody` 는 트리 패널과 공유._
+- [x] **1.5 PRD 탭 = 컬렉션 렌더** — `document` 보기(섹션 카드, 더블클릭 편집, 순서 ▲▼, 섹션 추가/삭제) · `table` 보기(속성 타입별 인라인 편집: text 입력, md 미리보기/더블클릭, select 드롭다운, checkbox; relation 은 1단계에서 `P1-14, 37` 식 번호 입력) · 좌측 목차(컬렉션 순서). 읽기 전용(reader/commenter)이면 편집 진입 차단(기존 `needEdit()` 패턴). 옛 `renderPrd`·`prdClickEdit`·`savePrd` 는 삭제. `prdContent` 는 내보내기(1.7)까지만 남김. board 보기는 2.5 까지 표로 보인다.
+  완료: 브라우저에서 legacy 섹션이 그대로 보이고 편집됨 · 새 섹션 추가 · 표 행 추가/수정/삭제 · 공유 링크로는 편집 안 됨.
+  _2026-09-06 브라우저 확인: legacy 섹션에 원문 PRD 전체(h1·표 10개) · 섹션 추가 → 제목 자동 편집 → Enter 저장 · 본문 Ctrl+Enter 저장 후 md 렌더(용어 칩·강조) · ▲ 이동 · 임시 `policies` 표의 md 셀 저장·Esc 취소 · 삭제 후 10개 원복 · 공유 링크(reader)는 버튼 0개·`canEdit` false. 콘솔 에러 없음. `node --check` 통과. 단순화: 본문 더블클릭 위치→커서 맞춤은 빼고 커서를 끝에 둠._
+- [x] **1.6 작업 탭 (table 보기까지)** — 탭 추가, 라우팅 `tab=tasks`(`viewParams`/`readViewParams`), `renderTasks(c)` 가 `tasks` 컬렉션을 `collectionHTML` 로 표시(board 도 지금은 표). board 는 2단계.
+  완료: 작업 추가·상태 select 변경·삭제.
+  _2026-09-06 브라우저 확인: 탭 활성 · `?tab=tasks` · 열 번호+6속성 · 추가→제목 자동 편집→Enter 저장 · 상태 `진행중` 저장 · 삭제→0 · PRD↔작업 탭 전환과 뒤로 가기 복원._
+- [x] **1.7 내보내기** — `exportMarkdown()` 을 §9 규칙으로 재작성(`resolveLocal`·`itemTitle` 헬퍼). document 컬렉션은 섹션이 `##`, 그 외는 md 속성 있으면 `### P1-14 · 제목` 블록·없으면 표, 작업은 상태별 `###` 묶음, `[[P1-14]]`·relation → `[P1-14 제목](#p1-14)`, 행·노드마다 `<a id="p1-14"></a>`, 노드에 `- ID: P1-14`. `openProjectData()` 의 legacy `/prd` 요청 제거(`prdContent` 미사용).
+  완료: 내보낸 md 를 GitHub 미리보기로 열어 표·링크 확인.
+  _2026-09-06 브라우저 확인(Blob 가로채기): 13,845자 · `## 기존 PRD` + 원문 표 10개 · 섹션 앵커 `p1-20` · `## 작업` + `_(비어 있음)_` · `## 기능명세서` 각 항목 `- ID: P1-1` + 앵커. GitHub 미리보기 확인은 사용자 쪽에서._
+- [x] **1.8 버전 스냅샷·복원** — `versions.collections jsonb` 컬럼 추가. `save_version` 이 컬렉션+행(id·seq·props·sort_order)을 담고 `item_count` 반환, `list_versions` 도 `item_count`. `restore_version` 은 스냅샷에 없는 컬렉션·행을 지운 뒤 UPSERT 로 id·seq 보존, 노드 UPSERT 에 `seq` 포함(옛 스냅샷의 seq 없는 노드는 `alloc_seq` 로 채움), 끝에 `next_seq` 를 최대 번호 이상으로. `NODE_FIELDS` 에 `seq`. 프런트 버전 목록에 "표 행 N개". `versions.prd` 는 legacy 로 유지.
+  완료: 저장 → 행 지우고 제목 바꾸기 → 복원 → 같은 seq 로 돌아옴.
+  _2026-09-06 확인: 저장 `item_count` 10 · 섹션 제목 수정 + 다른 섹션 삭제 → 복원 → 섹션 10개, 제목 원복, 삭제됐던 행이 같은 id·seq 로 복구 · 노드 seq 전부 유지._
+- [x] **1.9 부수 스캔 확장** — `sync_terms` 가 컬렉션 행의 md 속성 값을 본문으로 훑고, `list_images` 의 `used` 가 `items.props::text` 도 검색.
+  완료: 정책 본문에 `` `용어` `` 쓰면 사전에 잡힘 · 정책에 붙인 이미지가 앨범에서 "사용중".
+  _2026-09-06 확인: 섹션 본문에 `` `검증용어` `` → 용어 목록에 등록, 지우면 사라짐 · 본문에 이미지 링크 → 앨범 `used` true._
+- [x] **1.10 기존 PRD 표 이전** — `backend/migrate_prd_tables.py` (§7). 헤더 첫 셀 `ID` 인 표만 보고 행 ID 접두어로 대상을 정한다. DRY RUN 기본, `--apply`, `--undo`. 같은 표에 `legacy_id` 행이 있으면 건너뛴다(멱등).
+  완료: policies 20 · nfr **15** · decisions 23 · tests 41 행 · 각 `legacy_id` 보존 · 원본 md 무손실.
+  _2026-09-06 적용: 삽입 99행(seq 36~135), 재실행 시 전부 건너뜀, legacy 섹션 제목 "기존 PRD (표는 컬렉션으로 옮겨짐)", `projects.prd` 11,432자 그대로. **NFR 은 17이 아니라 15** — 17은 추적표 등 다른 곳의 `NFR-` 언급까지 센 값이었다(§1 표도 정정). 스크립트가 백엔드 이미지에 복사되지 않아 `docker compose cp` 로 넣어 실행 — Dockerfile 보정은 1.11 에서._
+- [x] **1.11 문서** — `README.md`(기능 블록·주소 규칙·내보내기·버전·API 표 8행·마이그레이션 안내), `ERD.md`(`versions.collections`, `data` 에 `seq`, 복원 규칙). `backend/Dockerfile` 에 `migrate_prd_tables.py` COPY.
+  _2026-09-06 확인: 실제 DB 테이블 19개 = ERD 19개. 컬렉션별 행 수 prd 10 · tasks 0 · policies 20 · nfr 15 · decisions 23 · tests 41, 노드 19, `next_seq` 135._
+
+### 2단계 — 연결과 판
+
+- [ ] **2.1 `[[ID]]` 렌더** — `md()`/`inline()` 에 `[[KEY-n]]` → 칩. 해석은 프로젝트 열 때 노드·행 seq 맵을 한 번 받아 클라이언트에서(`resolve` API 는 호버 미리보기용). 실패 시 빗금 칩.
+- [ ] **2.2 relation 편집기** — 칩 목록 + 검색(제목·seq) 추가 + 제거. `target` 있으면 그 컬렉션만.
+- [ ] **2.3 역참조** — `GET /api/projects/{slug}/backrefs/{seq}`(텍스트 스캔 + relation). 노드 상세 "관련 PRD" 줄, 컬렉션 행 "참조 N" 배지, 삭제 시 참조 수 + `twoStep`.
+- [ ] **2.4 추적표 뷰** — 정책 컬렉션 상단 토글 "추적표": 행별 참조 기능·테스트 목록. 저장 안 함.
+- [ ] **2.5 board 보기** — `board_by` select 로 열 구성, 카드 드래그로 상태 변경(기존 노드 DnD 패턴 재사용), 에픽 카드 `3/7`. `decisions` 도 board 가능.
+- [ ] **2.6 `item_events`** — items PUT 에서 바뀐 속성마다 기록. 카드 상세에 "이력" 접이식.
+- [ ] **2.7 코멘트 확장** — `comments.item_id`, 작업 카드 상세에 코멘트. `list_comments`·`create_comment` 의 권한 체크는 item 의 project 로.
+- [ ] **2.8 라우팅** — `?item=<seq>` / `?node=<seq>` 로 열면 해당 항목 선택·스크롤.
+- [ ] **2.9 문서** — ERD(item_events, comments 변경), README.
+
+### 3단계 — 자유도
+
+- [ ] **3.1 스키마 편집 UI** — 컬렉션 설정 모달: 속성 추가/이름/타입/옵션/순서/삭제(삭제 시 값도 지워짐 경고), 보기 종류·board_by, 제목.
+- [ ] **3.2 "+ 표 추가"** — §5 템플릿 목록 + 빈 표. `builtin` 은 숨김/복원.
+- [ ] **3.3 MCP 공통 툴** — `list_collections`, `search_items(query, collection?)`, `get_item(seq)`, `create_item(collection, props)`, `update_item(seq, props)`. 기존 13개 유지. `mcp_app.py` 서버 설명 갱신.
+- [ ] **3.4 SKILL.md** — `[[ID]]` 문법 · relation · **작업 처리 규칙**: "지시를 받으면 `search_items('tasks')` 로 같은 작업을 찾고, 있으면 `update_item` 으로 내용·상태 갱신, 없으면 `create_item` 후 진행하며 `진행중 → 완료` 로 옮긴다."
+- [ ] **3.5 프로젝트 키 편집 UI** — 프로젝트 목록 이름 변경 옆.
+- [ ] **3.6 문서** — README(MCP 툴 표, 템플릿), plugin/README.
+
+### 각 단계 끝의 공통 확인
+
+- `docker compose up -d --build backend frontend` 후 브라우저 실사용 확인(CLAUDE.md).
+- `doc/ERD.md` 와 `\dt` · `\d+` 대조.
+- 검증용 데이터(행·작업·프로젝트) 원복. **실제 프로젝트에서 파괴적 동작 시험 금지.**
+- 커밋·푸시는 사용자가 요청할 때만.
+
+---
+
+## 진행 상태
+
+> 작업하면서 여기를 갱신한다. 날짜 · 단계 · 무엇을 · 다음 할 일 · 막힌 것.
+
+| 날짜 | 단계 | 내용 |
+|---|---|---|
+| 2026-09-06 | — | 결정 D1~D14 확정. 이 문서 작성. 구현 시작 전. |
+| 2026-09-06 | 1.1 · 1.2 | 스키마·백필·템플릿 헬퍼(`COLLECTION_TEMPLATES`, `seed_collections`, `alloc_seq`, `project_key`) · `/resolve/{seq}` · `PUT /key` · 응답 `key`. ERD 갱신. 실제 DB 로 검증. 미커밋. |
+
+| 2026-09-06 | 1.3 · 1.4 · 1.5 | 컬렉션·행 API 11개(`validate_schema`/`validate_props`) · 노드 상세 `P1-14` · PRD 탭을 컬렉션 문서/표 렌더로 교체(`renderCollections`, `editItemProp` 등). API·브라우저·읽기 전용 모두 검증. 미커밋. |
+
+| 2026-09-06 | 1.6 ~ 1.10 | 작업 탭(표) · 내보내기 §9 · 버전 스냅샷/복원(컬렉션·행·노드 seq) · 용어/이미지 스캔 확장 · `migrate_prd_tables.py` 로 99행 이전(POL 20·NFR 15·DEC 23·AT 41). 전부 브라우저·API 검증. 미커밋. |
+
+| 2026-09-06 | 1.11 | README·ERD 갱신, Dockerfile COPY. **1단계 완료.** 미커밋 — 사용자에게 커밋 여부 확인 필요. |
+
+**다음 할 일**: 2단계 2.1 `[[ID]]` 렌더(칩·호버·이동, 실패 시 빗금) → 2.2 relation 편집기 → 2.3 역참조 → 2.4 추적표 뷰 → 2.5 board 보기 → 2.6 `item_events` → 2.7 코멘트 확장 → 2.8 라우팅 `?item=` → 2.9 문서.
+
+---
+
+## 열린 질문 (결정 필요 시 사용자에게)
+
+- `tests` 를 컬렉션으로 둘지 노드 하위 속성으로 옮길지 — 1단계 사용 후 판단(§5).
+- `매칭 업무 규칙`(PRD 4장)과 `핵심 정책`(2장)을 합칠지 — 사용자 답 대기. 합치면 `policies` 에 `area:text` 속성 추가로 해결.
+- `projects.key` 를 바꾼 뒤 옛 표기(`PLNT-14`)가 남은 외부 문서 — seq 기준이라 서비스 안 링크는 안 깨지지만, 내보낸 md 텍스트는 낡는다. 안내만 한다.
+
+## 하지 않는 것
+
+- md 가져오기(D13) · 컬렉션 간 조인/수식 · 저장된 필터 뷰 · 알림. 필요해지면 새 계획으로.
+
+---
+
+## 다른 세션이 이어받을 때
+
+1. 이 문서와 [ERD.md](ERD.md) 를 읽는다. `git log --oneline -5` 로 어디까지 커밋됐는지 본다.
+2. [진행 상태](#진행-상태)의 "다음 할 일"부터 한다. 체크리스트의 완료 조건으로 끝났는지 판단한다.
+3. DB 를 건드리면 같은 작업 안에서 ERD 를 갱신한다. 결정을 바꾸면 §3 에 이유와 함께 적는다.
+4. 끝나면 진행 상태 표에 한 줄 추가하고, 커밋은 사용자에게 묻는다.

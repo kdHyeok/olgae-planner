@@ -279,16 +279,205 @@ def init_db():
             DELETE FROM oauth_tokens WHERE refresh_expires_at < now();
         """)
 
+        # ---- 컬렉션(커스텀 표)·번호 체계. 설계는 doc/PLAN-collections.md §4 ----
+        cur.execute("""
+            -- 프로젝트 키(PLNT)와 번호 카운터. 기능·표 행·작업이 번호 하나를 공유한다 (D1·D2)
+            ALTER TABLE projects ADD COLUMN IF NOT EXISTS key text;
+            ALTER TABLE projects ADD COLUMN IF NOT EXISTS next_seq int NOT NULL DEFAULT 0;
+            -- 노드에도 번호를 준다. 고유성은 next_seq 발급으로 보장 (items 와 공유라 DB UNIQUE 로 못 건다)
+            ALTER TABLE nodes ADD COLUMN IF NOT EXISTS seq int;
+            CREATE INDEX IF NOT EXISTS nodes_project_seq_idx ON nodes (project_id, seq);
+
+            CREATE TABLE IF NOT EXISTS collections (
+                id serial PRIMARY KEY,
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                key text NOT NULL,                  -- 'prd' · 'tasks' · 'policies' … 내보내기·MCP 용 안정 키
+                title text NOT NULL,                -- 화면 이름. 바꿔도 key 는 유지
+                view text NOT NULL DEFAULT 'table', -- document | table | board
+                board_by text,                      -- board 일 때 그룹 기준 select 속성 key
+                schema jsonb NOT NULL DEFAULT '[]', -- [{key, label, type, options?, target?}]
+                sort_order int NOT NULL DEFAULT 0,
+                builtin bool NOT NULL DEFAULT false,
+                UNIQUE (project_id, key)
+            );
+            CREATE TABLE IF NOT EXISTS items (
+                id serial PRIMARY KEY,
+                project_id int NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                collection_id int NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+                seq int NOT NULL,                   -- <key>-<seq>. 노드와 번호 공유
+                props jsonb NOT NULL DEFAULT '{}',  -- {속성key: 값}. 검증은 API 에서
+                sort_order int NOT NULL DEFAULT 0,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now(),
+                created_by int REFERENCES users(id) ON DELETE SET NULL,
+                UNIQUE (project_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS items_collection_idx ON items (collection_id, sort_order);
+            CREATE INDEX IF NOT EXISTS items_project_id_idx ON items (project_id);
+            CREATE INDEX IF NOT EXISTS collections_project_id_idx ON collections (project_id);
+            -- 버전 스냅샷에 컬렉션·행도 담는다. data(노드)·prd 는 그대로 (1.8)
+            ALTER TABLE versions ADD COLUMN IF NOT EXISTS collections jsonb;
+
+            -- 코멘트는 노드 또는 컬렉션 행 중 하나에 달린다 (API·UI 는 2단계 2.7)
+            ALTER TABLE comments ALTER COLUMN node_id DROP NOT NULL;
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS item_id int REFERENCES items(id) ON DELETE CASCADE;
+            CREATE INDEX IF NOT EXISTS comments_item_id_idx ON comments (item_id);
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_target_chk') THEN
+                    ALTER TABLE comments ADD CONSTRAINT comments_target_chk
+                        CHECK (node_id IS NOT NULL OR item_id IS NOT NULL);
+                END IF;
+            END $$;
+        """)
+
         # 예전 행에는 slug 가 없다. 행마다 다른 난수를 넣어야 하니 여기서 채운다
         cur.execute("SELECT id FROM projects WHERE slug IS NULL")
         for (i,) in cur.fetchall():
             cur.execute("UPDATE projects SET slug = %s WHERE id = %s", (new_slug(), i))
+
+        # ---- 번호 체계 백필 (PLAN §4). 순서가 중요하다: 노드 번호 → 카운터 → 컬렉션 시드 ----
+        # 프로젝트 키가 없으면 P + id(36진수). 사용자가 나중에 바꿔도 링크는 seq 기준이라 안 깨진다
+        cur.execute("SELECT id FROM projects WHERE key IS NULL")
+        for (i,) in cur.fetchall():
+            cur.execute("UPDATE projects SET key = %s WHERE id = %s", ("P" + base36(i), i))
+        # 번호 없는 노드는 프로젝트별 id 순으로 이어서 매긴다
+        cur.execute("""SELECT project_id, coalesce(max(seq), 0) FROM nodes
+                       WHERE seq IS NOT NULL GROUP BY project_id""")
+        counters = dict(cur.fetchall())
+        cur.execute("SELECT id, project_id FROM nodes WHERE seq IS NULL ORDER BY project_id, id")
+        for nid, pid in cur.fetchall():
+            counters[pid] = counters.get(pid, 0) + 1
+            cur.execute("UPDATE nodes SET seq = %s WHERE id = %s", (counters[pid], nid))
+        # 카운터는 노드·행 최대 번호 이상이어야 한다
+        cur.execute("""UPDATE projects p SET next_seq = GREATEST(p.next_seq,
+                         coalesce((SELECT max(seq) FROM nodes n WHERE n.project_id = p.id), 0),
+                         coalesce((SELECT max(seq) FROM items i WHERE i.project_id = p.id), 0))""")
+        # 컬렉션이 하나도 없는 프로젝트에 prd·tasks 를 심는다. 기존 PRD 본문은 첫 섹션으로 (D7·D11)
+        cur.execute("""SELECT p.id, p.prd FROM projects p
+                       WHERE NOT EXISTS (SELECT 1 FROM collections c WHERE c.project_id = p.id)""")
+        for pid, prd in cur.fetchall():
+            seed_collections(cur, pid, prd)
 
 
 
 def rows_to_dicts(cur):
     cols = [c.name for c in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+# ---------- 컬렉션(커스텀 표) 템플릿 · 번호 발급 (doc/PLAN-collections.md §4·§5) ----------
+def base36(n: int) -> str:
+    digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    out = ""
+    while True:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+        if n == 0:
+            return out
+
+
+def project_key(name: str, pid: int) -> str:
+    """이름에 영문이 2자 이상 있으면 그 대문자(최대 4자), 없으면 P+id(36진수). 사용자가 바꿀 수 있다."""
+    letters = re.sub(r"[^A-Za-z]", "", name).upper()[:4]
+    return letters if len(letters) >= 2 else "P" + base36(pid)
+
+
+def alloc_seq(cur, pid: int) -> int:
+    """프로젝트 안 고유 번호. 원자적이라 동시 요청에서도 겹치지 않는다 (D2)."""
+    cur.execute("UPDATE projects SET next_seq = next_seq + 1 WHERE id = %s RETURNING next_seq", (pid,))
+    return cur.fetchone()[0]
+
+
+def _prop(key, label, type_, **extra):
+    return {"key": key, "label": label, "type": type_, **extra}
+
+
+def _select(key, label, *options):
+    return _prop(key, label, "select", options=list(options))
+
+
+# 항상 심는 것: prd · tasks. 나머지는 "+ 표 추가 → 템플릿" (D11)
+PRD_SECTIONS = ["한 줄 정의", "제품 목표", "배경", "사용자 문제", "해결 방안", "차별점",
+                "타겟 사용자", "사용자 시나리오", "접근 기기"]
+
+COLLECTION_TEMPLATES = {
+    "prd": {"title": "PRD", "view": "document",
+            "schema": [_prop("title", "제목", "text"), _prop("body", "본문", "md")]},
+    "tasks": {"title": "작업", "view": "board", "board_by": "status",
+              "schema": [_prop("title", "제목", "text"),
+                         _select("status", "상태", "할일", "진행중", "완료"),
+                         _select("kind", "종류", "에픽", "작업", "이슈"),
+                         _prop("parent", "상위", "relation", target="tasks"),
+                         _prop("related", "관련", "relation"),
+                         _prop("body", "내용", "md")]},
+    "policies": {"title": "핵심 정책", "view": "table",
+                 "schema": [_prop("policy", "정책", "md")]},
+    "nfr": {"title": "비기능 요구사항", "view": "table",
+            "schema": [_prop("area", "분야", "text"), _prop("requirement", "요구사항", "md")]},
+    "decisions": {"title": "미결정 사항", "view": "board", "board_by": "status",
+                  "schema": [_prop("topic", "항목", "text"),
+                             _select("status", "상태", "미결정", "결정"),
+                             _prop("default", "현재 기본안", "md"),
+                             _prop("decision", "결정 내용", "md")]},
+    "tests": {"title": "테스트 시나리오", "view": "table",
+              "schema": [_prop("scenario", "시나리오", "md"), _prop("expected", "기대 결과", "md"),
+                         _prop("related", "관련", "relation")]},
+    "actors": {"title": "객체(액터)", "view": "table",
+               "schema": [_prop("actor", "액터", "text"), _prop("role", "역할", "md")]},
+    "flows": {"title": "전체 흐름", "view": "table",
+              "schema": [_prop("acting", "액팅", "text"), _prop("scenario", "시나리오", "md")]},
+    "target_users": {"title": "타겟 사용자", "view": "table",
+                     "schema": [_prop("user", "사용자", "text"), _prop("purpose", "목적", "md")]},
+    "devices": {"title": "접근 기기", "view": "table", "schema": [_prop("value", "값", "text")]},
+    "domains": {"title": "도메인", "view": "table", "schema": [_prop("value", "값", "text")]},
+}
+
+
+def add_collection(cur, pid: int, key: str, tpl: dict | None = None, title: str | None = None,
+                   sort_order: int | None = None, builtin: bool = False):
+    """컬렉션 하나를 만든다. 같은 key 가 이미 있으면 None."""
+    t = tpl or COLLECTION_TEMPLATES[key]
+    if sort_order is None:
+        cur.execute("SELECT coalesce(max(sort_order), -1) + 1 FROM collections WHERE project_id = %s",
+                    (pid,))
+        sort_order = cur.fetchone()[0]
+    cur.execute("""INSERT INTO collections (project_id, key, title, view, board_by, schema,
+                                            sort_order, builtin)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (project_id, key) DO NOTHING RETURNING id""",
+                (pid, key, title or t["title"], t["view"], t.get("board_by"),
+                 json.dumps(t["schema"], ensure_ascii=False), sort_order, builtin))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def add_item(cur, pid: int, cid: int, props: dict, sort_order: int | None = None,
+             user_id: int | None = None):
+    """행 하나를 만들고 (id, seq) 를 돌려준다. 번호는 alloc_seq 로 받는다."""
+    if sort_order is None:
+        cur.execute("SELECT coalesce(max(sort_order), -1) + 1 FROM items WHERE collection_id = %s",
+                    (cid,))
+        sort_order = cur.fetchone()[0]
+    seq = alloc_seq(cur, pid)
+    cur.execute("""INSERT INTO items (project_id, collection_id, seq, props, sort_order, created_by)
+                   VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, seq""",
+                (pid, cid, seq, json.dumps(props, ensure_ascii=False), sort_order, user_id))
+    return cur.fetchone()
+
+
+def seed_collections(cur, pid: int, legacy_prd: str = ""):
+    """새 프로젝트(또는 컬렉션이 없는 옛 프로젝트)에 prd·tasks 를 심는다 (D7·D11).
+
+    legacy_prd 가 비어 있지 않고 기본 템플릿 문구가 아니면 '기존 PRD' 섹션으로 보존한다.
+    """
+    cid = add_collection(cur, pid, "prd", builtin=True, sort_order=0)
+    if cid:
+        text = (legacy_prd or "").strip()
+        if text and text != PRD_TEMPLATE.strip():
+            add_item(cur, pid, cid, {"title": "기존 PRD", "body": legacy_prd})
+        for title in PRD_SECTIONS:
+            add_item(cur, pid, cid, {"title": title, "body": ""})
+    add_collection(cur, pid, "tasks", builtin=True, sort_order=1)
 
 
 # ---------- auth ----------
@@ -973,7 +1162,7 @@ def list_projects(user: dict = Depends(current_user)):
     """내가 만든 프로젝트 + 멤버로 참여중인 프로젝트. my_role 로 UI 를 나눈다."""
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT p.slug, p.name, p.share_token, u.display_name AS owner,
+            SELECT p.slug, p.key, p.name, p.share_token, u.display_name AS owner,
                    CASE WHEN p.owner_id = %(uid)s THEN 'owner' ELSE m.role END AS my_role,
                    (SELECT count(*) FROM project_members q
                      WHERE q.project_id = p.id AND q.status = 'pending') AS pending,
@@ -1005,9 +1194,15 @@ def create_project(body: ProjectIn, user: dict = Depends(current_user)):
                                      " 만들 수 있습니다. 관리자에게 등급 상향을 요청하세요.")
         cur.execute("""INSERT INTO projects (owner_id, name, prd, slug)
                        VALUES (%s, %s, %s, %s)
-                       RETURNING slug, name, share_token""",
+                       RETURNING id, slug, name, share_token""",
                     (user["id"], body.name.strip(), PRD_TEMPLATE, new_slug()))
-        return rows_to_dicts(cur)[0]
+        row = rows_to_dicts(cur)[0]
+        pid = row.pop("id")
+        # 번호 앞부분(PLNT)과 기본 컬렉션(prd·tasks). PLAN-collections.md D1·D11
+        row["key"] = project_key(row["name"], pid)
+        cur.execute("UPDATE projects SET key = %s WHERE id = %s", (row["key"], pid))
+        seed_collections(cur, pid, PRD_TEMPLATE)
+        return row
 
 
 @app.put("/api/projects/{pid}")
@@ -1016,6 +1211,70 @@ def rename_project(pid: str, body: ProjectIn, user: dict = Depends(current_user)
         pid = check_own(cur, pid, user)
         cur.execute("UPDATE projects SET name = %s WHERE id = %s", (body.name.strip(), pid))
     return {"ok": True}
+
+
+class KeyIn(BaseModel):
+    key: str
+
+
+KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{1,4}$")
+
+
+@app.put("/api/projects/{pid}/key")
+def set_project_key(pid: str, body: KeyIn, user: dict = Depends(current_user)):
+    """번호 앞부분(PLNT). 바꿔도 링크는 seq 기준이라 안 깨진다 (PLAN D1)."""
+    key = body.key.strip().upper()
+    if not KEY_RE.match(key):
+        raise HTTPException(400, "키는 영문 대문자로 시작하는 2~5자(영문·숫자)여야 합니다")
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_own(cur, pid, user)
+        cur.execute("UPDATE projects SET key = %s WHERE id = %s", (key, pid))
+    return {"key": key}
+
+
+def item_title(props: dict, schema: list) -> str:
+    """행의 대표 이름: 첫 text 속성 값. 없으면 첫 비어있지 않은 문자열의 첫 줄 60자."""
+    props = props or {}
+    for prop in schema or []:
+        if prop.get("type") == "text" and props.get(prop["key"]):
+            return str(props[prop["key"]])
+    for prop in schema or []:
+        v = props.get(prop["key"])
+        if isinstance(v, str) and v.strip():
+            return v.strip().splitlines()[0][:60]
+    return ""
+
+
+def resolve_seq(cur, pid: int, seq: int) -> dict | None:
+    """프로젝트 안 번호 → 노드 또는 컬렉션 행. 둘은 번호 공간을 공유한다 (PLAN §6)."""
+    cur.execute("SELECT id, title FROM nodes WHERE project_id = %s AND seq = %s", (pid, seq))
+    row = cur.fetchone()
+    if row:
+        return {"kind": "node", "seq": seq, "id": row[0], "title": row[1]}
+    cur.execute("""SELECT i.id, i.props, c.key, c.schema FROM items i
+                   JOIN collections c ON c.id = i.collection_id
+                   WHERE i.project_id = %s AND i.seq = %s""", (pid, seq))
+    row = cur.fetchone()
+    if not row:
+        return None
+    iid, props, ckey, schema = row
+    return {"kind": "item", "seq": seq, "id": iid, "collection": ckey,
+            "title": item_title(props, schema)}
+
+
+@app.get("/api/projects/{pid}/resolve/{seq}")
+def resolve(pid: str, seq: int, share: str | None = None,
+            user: dict | None = Depends(opt_user)):
+    """`[[KEY-seq]]` 링크가 무엇을 가리키는지. 읽기 권한이면 누구나."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_access(cur, pid, user, share)
+        cur.execute("SELECT key FROM projects WHERE id = %s", (pid,))
+        key = cur.fetchone()[0]
+        hit = resolve_seq(cur, pid, seq)
+    if not hit:
+        raise HTTPException(404, "번호에 해당하는 항목이 없습니다")
+    hit["label"] = f"{key}-{seq}"
+    return hit
 
 
 @app.delete("/api/projects/{pid}", status_code=204)
@@ -1044,7 +1303,7 @@ def delete_share(pid: str, user: dict = Depends(current_user)):
 @app.get("/api/shared/{token}")
 def resolve_share(token: str, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT p.slug, p.name, u.display_name AS owner, p.owner_id, p.id
+        cur.execute("""SELECT p.slug, p.key, p.name, u.display_name AS owner, p.owner_id, p.id
                        FROM projects p JOIN users u ON u.id = p.owner_id
                        WHERE p.share_token = %s""", (token,))
         rows = rows_to_dicts(cur)
@@ -1145,6 +1404,254 @@ def remove_member(pid: str, uid: int, user: dict = Depends(current_user)):
                     (pid, uid))
 
 
+# ---------- 컬렉션(커스텀 표) · 행 (doc/PLAN-collections.md §4 · 1.3) ----------
+PROP_TYPES = ("text", "md", "select", "checkbox", "relation")
+VIEWS = ("document", "table", "board")
+PROP_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+COLL_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+
+
+def validate_schema(schema) -> list:
+    """속성 정의 배열을 검사해 정규화한다. jsonb 라 DB 가 대신 검사해 주지 않는다."""
+    if not isinstance(schema, list) or not schema:
+        raise HTTPException(400, "속성이 하나 이상 필요합니다")
+    out, seen = [], set()
+    for raw in schema:
+        if not isinstance(raw, dict):
+            raise HTTPException(400, "속성 정의는 객체여야 합니다")
+        key = str(raw.get("key", "")).strip()
+        typ = raw.get("type")
+        if not PROP_KEY_RE.match(key):
+            raise HTTPException(400, f"속성 key '{key}' 는 소문자로 시작하는 영문·숫자·_ 만 됩니다")
+        if key in seen:
+            raise HTTPException(400, f"속성 key '{key}' 가 중복됩니다")
+        if typ not in PROP_TYPES:
+            raise HTTPException(400, f"속성 타입은 {', '.join(PROP_TYPES)} 중 하나여야 합니다")
+        prop = {"key": key, "label": str(raw.get("label", "")).strip() or key, "type": typ}
+        if typ == "select":
+            opts = [str(o).strip() for o in (raw.get("options") or []) if str(o).strip()]
+            if not opts:
+                raise HTTPException(400, f"select 속성 '{prop['label']}' 에는 옵션이 필요합니다")
+            prop["options"] = opts
+        if typ == "relation" and raw.get("target"):
+            prop["target"] = str(raw["target"]).strip()
+        seen.add(key)
+        out.append(prop)
+    return out
+
+
+def validate_props(schema: list, props: dict) -> dict:
+    """스키마에 없는 key 는 버리고 타입을 맞춘다. None 은 '비움'."""
+    by_key = {p["key"]: p for p in schema}
+    out = {}
+    for key, val in (props or {}).items():
+        prop = by_key.get(key)
+        if not prop:
+            continue
+        typ = prop["type"]
+        if val is None:
+            out[key] = None
+        elif typ in ("text", "md"):
+            if not isinstance(val, str):
+                raise HTTPException(400, f"'{prop['label']}' 는 문자열이어야 합니다")
+            out[key] = val
+        elif typ == "select":
+            if val not in prop["options"]:
+                raise HTTPException(400, f"'{prop['label']}' 는 {' · '.join(prop['options'])} 중 하나여야 합니다")
+            out[key] = val
+        elif typ == "checkbox":
+            out[key] = bool(val)
+        elif typ == "relation":
+            if not isinstance(val, list) or not all(isinstance(x, int) for x in val):
+                raise HTTPException(400, f"'{prop['label']}' 는 번호(seq) 배열이어야 합니다")
+            out[key] = val
+    return out
+
+
+COLL_COLS = "id, project_id, key, title, view, board_by, schema, sort_order, builtin"
+
+
+def load_collection(cur, cid: int) -> dict:
+    cur.execute(f"SELECT {COLL_COLS} FROM collections WHERE id = %s", (cid,))
+    rows = rows_to_dicts(cur)
+    if not rows:
+        raise HTTPException(404, "표를 찾을 수 없습니다")
+    return rows[0]
+
+
+def load_item(cur, iid: int) -> tuple[dict, dict]:
+    """(행, 소속 컬렉션)."""
+    cur.execute("""SELECT id, project_id, collection_id, seq, props, sort_order,
+                          created_at, updated_at, created_by
+                   FROM items WHERE id = %s""", (iid,))
+    rows = rows_to_dicts(cur)
+    if not rows:
+        raise HTTPException(404, "행을 찾을 수 없습니다")
+    return rows[0], load_collection(cur, rows[0]["collection_id"])
+
+
+def public_collection(c: dict) -> dict:
+    return {k: v for k, v in c.items() if k != "project_id"}
+
+
+def public_item(i: dict) -> dict:
+    return {k: v for k, v in i.items() if k not in ("project_id", "collection_id")}
+
+
+@app.get("/api/projects/{pid}/collections")
+def list_collections(pid: str, share: str | None = None,
+                     user: dict | None = Depends(opt_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_access(cur, pid, user, share)
+        cur.execute(f"""SELECT {COLL_COLS},
+                               (SELECT count(*) FROM items i WHERE i.collection_id = c.id) AS items
+                        FROM collections c WHERE project_id = %s ORDER BY sort_order, id""", (pid,))
+        return [public_collection(c) for c in rows_to_dicts(cur)]
+
+
+@app.post("/api/projects/{pid}/collections", status_code=201)
+def create_collection(pid: str, body: dict, user: dict = Depends(current_user)):
+    """템플릿 key(policies·nfr…)면 템플릿으로, 아니면 title·schema 를 받아 사용자 정의 표로."""
+    key = str(body.get("key", "")).strip()
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_write(cur, pid, user)
+        if key in COLLECTION_TEMPLATES and not body.get("schema"):
+            cid = add_collection(cur, pid, key, title=body.get("title"), builtin=True)
+        else:
+            if not COLL_KEY_RE.match(key):
+                raise HTTPException(400, "표 key 는 소문자로 시작하는 영문·숫자·_ 만 됩니다")
+            title = str(body.get("title", "")).strip()
+            if not title:
+                raise HTTPException(400, "표 이름이 필요합니다")
+            view = body.get("view", "table")
+            if view not in VIEWS:
+                raise HTTPException(400, f"보기는 {', '.join(VIEWS)} 중 하나여야 합니다")
+            tpl = {"title": title, "view": view, "board_by": body.get("board_by"),
+                   "schema": validate_schema(body.get("schema"))}
+            cid = add_collection(cur, pid, key, tpl=tpl)
+        if cid is None:
+            raise HTTPException(409, f"'{key}' 표가 이미 있습니다")
+        return public_collection(load_collection(cur, cid))
+
+
+@app.put("/api/collections/{cid}")
+def update_collection(cid: int, body: dict, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        c = load_collection(cur, cid)
+        check_write(cur, c["project_id"], user)
+        sets, vals = [], []
+        if "title" in body:
+            title = str(body["title"]).strip()
+            if not title:
+                raise HTTPException(400, "표 이름이 필요합니다")
+            sets.append("title = %s"); vals.append(title)
+        schema = c["schema"]
+        if "schema" in body:
+            schema = validate_schema(body["schema"])
+            sets.append("schema = %s"); vals.append(json.dumps(schema, ensure_ascii=False))
+        if "view" in body:
+            if body["view"] not in VIEWS:
+                raise HTTPException(400, f"보기는 {', '.join(VIEWS)} 중 하나여야 합니다")
+            sets.append("view = %s"); vals.append(body["view"])
+        if "board_by" in body:
+            bb = body["board_by"]
+            if bb is not None and not any(p["key"] == bb and p["type"] == "select" for p in schema):
+                raise HTTPException(400, "board 그룹 기준은 select 속성이어야 합니다")
+            sets.append("board_by = %s"); vals.append(bb)
+        if "sort_order" in body:
+            sets.append("sort_order = %s"); vals.append(int(body["sort_order"]))
+        if not sets:
+            raise HTTPException(400, "바꿀 내용이 없습니다")
+        cur.execute(f"UPDATE collections SET {', '.join(sets)} WHERE id = %s", (*vals, cid))
+        return public_collection(load_collection(cur, cid))
+
+
+@app.delete("/api/collections/{cid}", status_code=204)
+def delete_collection(cid: int, user: dict = Depends(current_user)):
+    """표를 지우면 행이 전부 사라진다(CASCADE). 프런트가 행 수를 보여주고 두 번 확인한다."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        c = load_collection(cur, cid)
+        check_write(cur, c["project_id"], user)
+        cur.execute("DELETE FROM collections WHERE id = %s", (cid,))
+
+
+@app.get("/api/collections/{cid}/items")
+def list_items(cid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        c = load_collection(cur, cid)
+        check_access(cur, c["project_id"], user, share)
+        cur.execute("""SELECT id, seq, props, sort_order, created_at, updated_at, created_by
+                       FROM items WHERE collection_id = %s ORDER BY sort_order, id""", (cid,))
+        return rows_to_dicts(cur)
+
+
+@app.post("/api/collections/{cid}/items", status_code=201)
+def create_item(cid: int, body: dict, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        c = load_collection(cur, cid)
+        pid = check_write(cur, c["project_id"], user)
+        props = validate_props(c["schema"], body.get("props", body))
+        after = body.get("after")            # 이 행(id) 바로 뒤에 넣기. 없으면 맨 끝
+        sort_order = None
+        if after is not None:
+            cur.execute("SELECT sort_order FROM items WHERE id = %s AND collection_id = %s",
+                        (int(after), cid))
+            row = cur.fetchone()
+            if row:
+                sort_order = row[0] + 1
+                cur.execute("""UPDATE items SET sort_order = sort_order + 1
+                               WHERE collection_id = %s AND sort_order >= %s""", (cid, sort_order))
+        iid, _seq = add_item(cur, pid, cid, props, sort_order=sort_order, user_id=user["id"])
+        item, _ = load_item(cur, iid)
+        return public_item(item)
+
+
+@app.put("/api/items/{iid}")
+def update_item(iid: int, body: dict, user: dict = Depends(current_user)):
+    """준 속성만 덮어쓴다. 스키마에 없는 key 는 무시."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        item, c = load_item(cur, iid)
+        check_write(cur, c["project_id"], user)
+        patch = validate_props(c["schema"], body.get("props", body))
+        if not patch:
+            raise HTTPException(400, "바꿀 속성이 없습니다")
+        props = {**(item["props"] or {}), **patch}
+        cur.execute("UPDATE items SET props = %s, updated_at = now() WHERE id = %s",
+                    (json.dumps(props, ensure_ascii=False), iid))
+        item, _ = load_item(cur, iid)
+        return public_item(item)
+
+
+@app.delete("/api/items/{iid}", status_code=204)
+def delete_item(iid: int, user: dict = Depends(current_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        item, c = load_item(cur, iid)
+        check_write(cur, c["project_id"], user)
+        cur.execute("DELETE FROM items WHERE id = %s", (iid,))
+
+
+@app.post("/api/items/{iid}/move")
+def move_item(iid: int, body: dict, user: dict = Depends(current_user)):
+    """같은 표 안에서 한 칸 위(-1)·아래(+1). 노드의 ▲▼ 와 같은 방식."""
+    direction = int(body.get("dir", 0))
+    if direction not in (-1, 1):
+        raise HTTPException(400, "dir 은 -1 또는 1")
+    with pool.connection() as conn, conn.cursor() as cur:
+        item, c = load_item(cur, iid)
+        check_write(cur, c["project_id"], user)
+        cur.execute("SELECT id FROM items WHERE collection_id = %s ORDER BY sort_order, id",
+                    (c["id"],))
+        ids = [r[0] for r in cur.fetchall()]
+        i = ids.index(iid)
+        j = i + direction
+        if j < 0 or j >= len(ids):
+            return {"moved": False}
+        ids[i], ids[j] = ids[j], ids[i]
+        for order, item_id in enumerate(ids):          # 순서를 0..n-1 로 다시 매긴다
+            cur.execute("UPDATE items SET sort_order = %s WHERE id = %s", (order, item_id))
+    return {"moved": True}
+
+
 # ---------- prd ----------
 class PrdIn(BaseModel):
     content: str
@@ -1198,12 +1705,12 @@ def create_node(pid: str, body: NodeIn, share: str | None = None,
         if body.parent_id is not None and node_project(cur, body.parent_id) != pid:
             raise HTTPException(400, "다른 프로젝트의 항목 아래에는 추가할 수 없습니다")
         cur.execute(
-            """INSERT INTO nodes (project_id, parent_id, title, sort_order)
+            """INSERT INTO nodes (project_id, parent_id, title, sort_order, seq)
                VALUES (%s, %s, %s, (SELECT coalesce(max(sort_order), -1) + 1 FROM nodes
                                     WHERE project_id = %s
-                                    AND parent_id IS NOT DISTINCT FROM %s))
+                                    AND parent_id IS NOT DISTINCT FROM %s), %s)
                RETURNING *""",
-            (pid, body.parent_id, body.title, pid, body.parent_id))
+            (pid, body.parent_id, body.title, pid, body.parent_id, alloc_seq(cur, pid)))
         return rows_to_dicts(cur)[0]
 
 
@@ -1268,6 +1775,14 @@ def sync_terms(cur, pid: int):
     cur.execute("SELECT description FROM nodes WHERE project_id = %s"
                 " ORDER BY sort_order, id", (pid,))
     texts += [r[0] for r in cur.fetchall()]
+    # 컬렉션 행의 md 속성(정책 본문, PRD 섹션 등)도 본문이다 (PLAN 1.9)
+    cur.execute("""SELECT i.props, c.schema FROM items i
+                   JOIN collections c ON c.id = i.collection_id
+                   WHERE i.project_id = %s ORDER BY c.sort_order, i.sort_order, i.id""", (pid,))
+    for props, schema in cur.fetchall():
+        for prop in schema or []:
+            if prop.get("type") == "md":
+                texts.append((props or {}).get(prop["key"]) or "")
 
     # 본문에 나온 순서대로 (추가 순서가 곧 기본 정렬)
     found, seen = [], set()
@@ -1362,7 +1877,7 @@ def delete_category(cid: int, share: str | None = None, user: dict | None = Depe
 
 
 # ---------- versions (PRD + 기능명세서 스냅샷) ----------
-NODE_FIELDS = ("id", "parent_id", "title", "description", "status", "importance", "sort_order")
+NODE_FIELDS = ("id", "parent_id", "title", "description", "status", "importance", "sort_order", "seq")
 
 
 @app.post("/api/projects/{pid}/versions", status_code=201)
@@ -1374,19 +1889,32 @@ def save_version(pid: str, share: str | None = None, user: dict = Depends(curren
         snapshot = rows_to_dicts(cur)
         cur.execute("SELECT prd FROM projects WHERE id = %s", (pid,))
         prd = cur.fetchone()[0]
-        cur.execute("""INSERT INTO versions (project_id, user_id, username, data, prd)
-                       VALUES (%s, %s, %s, %s, %s) RETURNING id, created_at""",
-                    (pid, user["id"], user["display_name"], json.dumps(snapshot), prd))
+        # 컬렉션과 행. id·seq 를 그대로 담아 복원 때 링크가 안 깨지게 한다 (PLAN 1.8)
+        cur.execute(f"SELECT {COLL_COLS} FROM collections WHERE project_id = %s ORDER BY sort_order, id",
+                    (pid,))
+        colls = rows_to_dicts(cur)
+        for c in colls:
+            c.pop("project_id", None)
+            cur.execute("""SELECT id, seq, props, sort_order FROM items
+                           WHERE collection_id = %s ORDER BY sort_order, id""", (c["id"],))
+            c["items"] = rows_to_dicts(cur)
+        item_count = sum(len(c["items"]) for c in colls)
+        cur.execute("""INSERT INTO versions (project_id, user_id, username, data, prd, collections)
+                       VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, created_at""",
+                    (pid, user["id"], user["display_name"], json.dumps(snapshot), prd,
+                     json.dumps(colls, ensure_ascii=False, default=str)))
         vid, created = cur.fetchone()
     return {"id": vid, "created_at": created, "username": user["display_name"],
-            "node_count": len(snapshot)}
+            "node_count": len(snapshot), "item_count": item_count}
 
 
 @app.get("/api/projects/{pid}/versions")
 def list_versions(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
         pid = check_write(cur, pid, user, share)
-        cur.execute("""SELECT id, username, created_at, jsonb_array_length(data) AS node_count
+        cur.execute("""SELECT id, username, created_at, jsonb_array_length(data) AS node_count,
+                              (SELECT coalesce(sum(jsonb_array_length(c->'items')), 0)::int
+                                 FROM jsonb_array_elements(coalesce(collections, '[]'::jsonb)) c) AS item_count
                        FROM versions WHERE project_id = %s ORDER BY created_at DESC""", (pid,))
         return rows_to_dicts(cur)
 
@@ -1395,11 +1923,11 @@ def list_versions(pid: str, share: str | None = None, user: dict | None = Depend
 def restore_version(vid: int, share: str | None = None, user: dict = Depends(current_user)):
     """PRD 와 기능 트리를 그 시점으로 되돌린다. 살아남는 항목은 id 를 유지해 코멘트가 보존된다."""
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT project_id, data, prd FROM versions WHERE id = %s", (vid,))
+        cur.execute("SELECT project_id, data, prd, collections FROM versions WHERE id = %s", (vid,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "버전을 찾을 수 없습니다")
-        pid, snapshot, prd = row
+        pid, snapshot, prd, colls = row
         pid = check_write(cur, pid, user, share)
         if prd is not None:
             cur.execute("UPDATE projects SET prd = %s WHERE id = %s", (prd, pid))
@@ -1418,18 +1946,66 @@ def restore_version(vid: int, share: str | None = None, user: dict = Depends(cur
         for n in sorted(snapshot, key=depth):
             cur.execute("""
                 INSERT INTO nodes (id, project_id, parent_id, title, description,
-                                   status, importance, sort_order)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                   status, importance, sort_order, seq)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     parent_id = EXCLUDED.parent_id, title = EXCLUDED.title,
                     description = EXCLUDED.description, status = EXCLUDED.status,
-                    importance = EXCLUDED.importance, sort_order = EXCLUDED.sort_order
+                    importance = EXCLUDED.importance, sort_order = EXCLUDED.sort_order,
+                    seq = COALESCE(EXCLUDED.seq, nodes.seq)
                 WHERE nodes.project_id = EXCLUDED.project_id""",
                 (n["id"], pid, n["parent_id"], n["title"], n["description"],
-                 n["status"], n["importance"], n["sort_order"]))
+                 n["status"], n["importance"], n["sort_order"], n.get("seq")))
         cur.execute("""SELECT setval(pg_get_serial_sequence('nodes', 'id'),
                        GREATEST((SELECT coalesce(max(id), 1) FROM nodes), 1))""")
-    return {"restored": len(snapshot)}
+        # 옛 스냅샷(seq 없음)에서 살아난 노드에 번호를 준다
+        cur.execute("SELECT id FROM nodes WHERE project_id = %s AND seq IS NULL ORDER BY id", (pid,))
+        for (nid,) in cur.fetchall():
+            cur.execute("UPDATE nodes SET seq = %s WHERE id = %s", (alloc_seq(cur, pid), nid))
+
+        # 컬렉션·행. 스냅샷에 없는 것은 지우고, 있는 것은 id·seq 를 지켜 UPSERT (PLAN 1.8)
+        restored_items = 0
+        if colls is not None:
+            keep_c = [c["id"] for c in colls] or [0]
+            cur.execute("DELETE FROM collections WHERE project_id = %s AND NOT (id = ANY(%s))",
+                        (pid, keep_c))
+            keep_i = [it["id"] for c in colls for it in c.get("items", [])] or [0]
+            cur.execute("DELETE FROM items WHERE project_id = %s AND NOT (id = ANY(%s))", (pid, keep_i))
+            for c in colls:
+                cur.execute("""
+                    INSERT INTO collections (id, project_id, key, title, view, board_by, schema,
+                                             sort_order, builtin)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        key = EXCLUDED.key, title = EXCLUDED.title, view = EXCLUDED.view,
+                        board_by = EXCLUDED.board_by, schema = EXCLUDED.schema,
+                        sort_order = EXCLUDED.sort_order, builtin = EXCLUDED.builtin
+                    WHERE collections.project_id = EXCLUDED.project_id""",
+                    (c["id"], pid, c["key"], c["title"], c.get("view", "table"), c.get("board_by"),
+                     json.dumps(c.get("schema") or [], ensure_ascii=False),
+                     c.get("sort_order", 0), bool(c.get("builtin"))))
+                for it in c.get("items", []):
+                    cur.execute("""
+                        INSERT INTO items (id, project_id, collection_id, seq, props, sort_order)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            collection_id = EXCLUDED.collection_id, seq = EXCLUDED.seq,
+                            props = EXCLUDED.props, sort_order = EXCLUDED.sort_order,
+                            updated_at = now()
+                        WHERE items.project_id = EXCLUDED.project_id""",
+                        (it["id"], pid, c["id"], it["seq"],
+                         json.dumps(it.get("props") or {}, ensure_ascii=False), it.get("sort_order", 0)))
+                    restored_items += 1
+            cur.execute("""SELECT setval(pg_get_serial_sequence('collections', 'id'),
+                           GREATEST((SELECT coalesce(max(id), 1) FROM collections), 1))""")
+            cur.execute("""SELECT setval(pg_get_serial_sequence('items', 'id'),
+                           GREATEST((SELECT coalesce(max(id), 1) FROM items), 1))""")
+        # 번호 카운터는 되살린 최대 번호 이상이어야 한다
+        cur.execute("""UPDATE projects p SET next_seq = GREATEST(p.next_seq,
+                         coalesce((SELECT max(seq) FROM nodes n WHERE n.project_id = p.id), 0),
+                         coalesce((SELECT max(seq) FROM items i WHERE i.project_id = p.id), 0))
+                       WHERE p.id = %s""", (pid,))
+    return {"restored": len(snapshot), "items": restored_items}
 
 
 @app.delete("/api/versions/{vid}", status_code=204)
@@ -1512,7 +2088,10 @@ def list_images(pid: str, share: str | None = None, user: dict | None = Depends(
                               AND position('/api/images/' || i.id in p.prd) > 0)
                     OR EXISTS (SELECT 1 FROM nodes n
                                WHERE n.project_id = i.project_id
-                                 AND position('/api/images/' || i.id in n.description) > 0)) AS used
+                                 AND position('/api/images/' || i.id in n.description) > 0)
+                    OR EXISTS (SELECT 1 FROM items it
+                               WHERE it.project_id = i.project_id
+                                 AND position('/api/images/' || i.id in it.props::text) > 0)) AS used
             FROM images i WHERE i.project_id = %s
             ORDER BY i.created_at DESC, i.id""", (pid,))
         return rows_to_dicts(cur)
