@@ -353,8 +353,15 @@ OAuth 로그인은 기존 `users.login_id`·비밀번호와 `login_attempts` 잠
 | `prop` | 바뀐 속성 | text | NN | | 컬렉션 `schema` 의 속성 key |
 | `before` / `after` | 이전 / 이후 값 | jsonb | | | 속성 타입 그대로(문자열·bool·번호 배열). 값이 **실제로 달라진 속성만** 남긴다 |
 
-`PUT /api/items/{iid}` 가 기록하고 `GET /api/items/{iid}/events` 가 최근 100개를 돌려줍니다.
+`PUT /api/items/{iid}` 가 기록하고 `GET /api/items/{iid}/events` 가 최근 것부터 돌려줍니다.
 행 상세 모달의 "이력" 탭에서 봅니다. 행 추가·삭제는 남기지 않습니다(속성 변경만).
+
+**남기는 기준** — 이력은 "고친 기록"이므로 다음은 남기지 않습니다.
+
+- 값이 실제로 달라지지 않은 저장
+- **비어 있던 칸을 처음 채운 경우**(`before` 가 `null`·`""`·`[]`·`false`) — 새 행을 채우는 과정이 이력을 덮는 것을 막습니다
+
+행마다 **최신 20개**(`ITEM_EVENT_KEEP`)만 남기고, 새 이력을 쓸 때 초과분을 지웁니다(`trim_events`).
 
 ### settings — 서비스 설정
 
@@ -529,7 +536,7 @@ ERD 선으로 보이지 않지만 애플리케이션이 텍스트를 스캔해 �
 
 | 출처 | 대상 | 방법 |
 |---|---|---|
-| `projects.prd`, `nodes.description` 의 `![](/api/images/<id>)` | `images.id` | 앨범의 사용 여부(`used`) 판정 |
+| `projects.prd`, `nodes.description`, `items.props`(md 값) 의 `![](/api/images/<id>)` | `images.id` | 앨범의 사용 여부(`used`) 판정. **이미지를 지우면 `strip_image_refs()` 가 이 참조도 함께 걷어냅니다**(주소가 절대·상대여도 id 로 찾음) — 지운 그림이 깨진 채 남지 않게 |
 | `projects.prd`, `nodes.description`, `items.props`(md 값) 의 `` `용어` `` | `terms.term` | 용어 행 자동 생성·삭제, 사용처 이동 (items 스캔은 1.9) |
 | `nodes.description`, `items.props`(md 값) 의 `[[<key>-<seq>]]` | `nodes.seq` 또는 `items.seq` | 인라인 링크 칩. 역참조("이걸 가리키는 것")는 텍스트 스캔으로 계산 (2단계) |
 | `items.props` 의 relation 속성 `[seq, …]` | `nodes.seq` 또는 `items.seq` | 구조적 링크. `schema.target` 이 있으면 그 컬렉션만. FK 가 아니라 삭제돼도 남는다 → 화면은 빗금 칩 |
