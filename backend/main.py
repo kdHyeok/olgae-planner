@@ -328,6 +328,14 @@ def init_db():
                 after jsonb
             );
             CREATE INDEX IF NOT EXISTS item_events_item_id_idx ON item_events (item_id, at DESC);
+            -- 이미 만들어진 tasks 표의 라벨·옵션 순서를 템플릿과 맞춘다 (행의 값은 건드리지 않는다)
+            -- jsonb 는 키 순서를 제 맘대로 정렬하므로 실제 저장 순서(… "label", "target" …)에 맞춘다
+            UPDATE collections SET schema = replace(schema::text,
+                    '"label": "상위", "target"', '"label": "상위 작업", "target"')::jsonb
+             WHERE key = 'tasks' AND schema::text LIKE '%"label": "상위", "target"%';
+            UPDATE collections SET schema = replace(schema::text,
+                    '["에픽", "작업", "이슈"]', '["작업", "에픽", "이슈"]')::jsonb
+             WHERE key = 'tasks' AND schema::text LIKE '%["에픽", "작업", "이슈"]%';
 
             -- 코멘트는 노드 또는 컬렉션 행 중 하나에 달린다 (API·UI 는 2단계 2.7)
             ALTER TABLE comments ALTER COLUMN node_id DROP NOT NULL;
@@ -347,10 +355,12 @@ def init_db():
             cur.execute("UPDATE projects SET slug = %s WHERE id = %s", (new_slug(), i))
 
         # ---- 번호 체계 백필 (PLAN §4). 순서가 중요하다: 노드 번호 → 카운터 → 컬렉션 시드 ----
-        # 프로젝트 키가 없으면 P + id(36진수). 사용자가 나중에 바꿔도 링크는 seq 기준이라 안 깨진다
-        cur.execute("SELECT id FROM projects WHERE key IS NULL")
-        for (i,) in cur.fetchall():
-            cur.execute("UPDATE projects SET key = %s WHERE id = %s", ("P" + base36(i), i))
+        # 키가 없으면 소유자 안에서 겹치지 않는 P1 · P2 … 를 준다.
+        # 사용자가 나중에 바꿔도 링크는 seq 기준이라 안 깨진다
+        cur.execute("SELECT id, owner_id FROM projects WHERE key IS NULL ORDER BY id")
+        for pid_, owner_ in cur.fetchall():
+            cur.execute("UPDATE projects SET key = %s WHERE id = %s",
+                        (next_project_key(cur, owner_, pid_), pid_))
         # 번호 없는 노드는 프로젝트별 id 순으로 이어서 매긴다
         cur.execute("""SELECT project_id, coalesce(max(seq), 0) FROM nodes
                        WHERE seq IS NOT NULL GROUP BY project_id""")
@@ -417,8 +427,8 @@ COLLECTION_TEMPLATES = {
     "tasks": {"title": "작업", "view": "board", "board_by": "status",
               "schema": [_prop("title", "제목", "text"),
                          _select("status", "상태", "할일", "진행중", "완료"),
-                         _select("kind", "종류", "에픽", "작업", "이슈"),
-                         _prop("parent", "상위", "relation", target="tasks"),
+                         _select("kind", "종류", "작업", "에픽", "이슈"),
+                         _prop("parent", "상위 작업", "relation", target="tasks"),
                          _prop("related", "관련", "relation"),
                          _prop("body", "내용", "md")]},
     "policies": {"title": "핵심 정책", "view": "table",
@@ -1203,10 +1213,11 @@ def create_project(body: ProjectIn, user: dict = Depends(current_user)):
         if limit is not None and project_count(cur, user["id"]) >= limit:
             raise HTTPException(403, f"{user['role']} 등급은 프로젝트를 최대 {limit}개까지"
                                      " 만들 수 있습니다. 관리자에게 등급 상향을 요청하세요.")
-        cur.execute("""INSERT INTO projects (owner_id, name, prd, slug)
-                       VALUES (%s, %s, %s, %s)
-                       RETURNING id, slug, name, share_token""",
-                    (user["id"], body.name.strip(), PRD_TEMPLATE, new_slug()))
+        cur.execute("""INSERT INTO projects (owner_id, name, prd, slug, key)
+                       VALUES (%s, %s, %s, %s, %s)
+                       RETURNING id, slug, name, share_token, key""",
+                    (user["id"], body.name.strip(), PRD_TEMPLATE, new_slug(),
+                     next_project_key(cur, user["id"])))
         row = rows_to_dicts(cur)[0]
         pid = row.pop("id")
         # 번호 앞부분(PLNT)과 기본 컬렉션(prd·tasks). PLAN-collections.md D1·D11
@@ -1231,6 +1242,23 @@ class KeyIn(BaseModel):
 KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{1,4}$")
 
 
+def next_project_key(cur, owner_id: int, exclude_pid: int | None = None) -> str:
+    """그 사용자의 프로젝트 안에서 겹치지 않는 P1 · P2 … 를 고른다."""
+    cur.execute("SELECT key FROM projects WHERE owner_id = %s AND key IS NOT NULL"
+                " AND id IS DISTINCT FROM %s", (owner_id, exclude_pid))
+    taken = {r[0] for r in cur.fetchall()}
+    i = 1
+    while f"P{i}" in taken:
+        i += 1
+    return f"P{i}"
+
+
+def key_taken(cur, owner_id: int, key: str, pid: int) -> bool:
+    cur.execute("""SELECT 1 FROM projects WHERE owner_id = %s AND upper(key) = %s
+                   AND id <> %s LIMIT 1""", (owner_id, key, pid))
+    return cur.fetchone() is not None
+
+
 @app.put("/api/projects/{pid}/key")
 def set_project_key(pid: str, body: KeyIn, user: dict = Depends(current_user)):
     """번호 앞부분(PLNT). 바꿔도 링크는 seq 기준이라 안 깨진다 (PLAN D1)."""
@@ -1239,6 +1267,10 @@ def set_project_key(pid: str, body: KeyIn, user: dict = Depends(current_user)):
         raise HTTPException(400, "키는 영문 대문자로 시작하는 2~5자(영문·숫자)여야 합니다")
     with pool.connection() as conn, conn.cursor() as cur:
         pid = check_own(cur, pid, user)
+        cur.execute("SELECT owner_id FROM projects WHERE id = %s", (pid,))
+        owner_id = cur.fetchone()[0]
+        if key_taken(cur, owner_id, key, pid):
+            raise HTTPException(409, f"'{key}' 는 다른 프로젝트가 이미 쓰고 있습니다")
         cur.execute("UPDATE projects SET key = %s WHERE id = %s", (key, pid))
     return {"key": key}
 
@@ -1479,6 +1511,37 @@ def validate_props(schema: list, props: dict) -> dict:
     return out
 
 
+def check_relation_cycles(cur, coll: dict, item: dict, patch: dict) -> None:
+    """자기 표를 가리키는 relation(상위 작업 같은 것)이 고리를 만들지 않게 막는다.
+
+    A 의 상위를 B 로 두려면 B 를 타고 올라갔을 때 A 가 나오면 안 된다.
+    (A→B, B→A 처럼 서로 상위가 되는 상황을 막는다.)
+    """
+    selfrefs = [x for x in (coll["schema"] or [])
+                if x["type"] == "relation" and x.get("target") == coll["key"]]
+    if not selfrefs:
+        return
+    cur.execute("SELECT seq, props FROM items WHERE collection_id = %s", (coll["id"],))
+    rows = {seq: (props or {}) for seq, props in cur.fetchall()}
+    me = item["seq"]
+    for prop in selfrefs:
+        if prop["key"] not in patch:
+            continue
+        for target in patch[prop["key"]] or []:
+            if target == me:
+                raise HTTPException(400, f"자기 자신을 '{prop['label']}' 로 둘 수 없습니다")
+            # target 에서 위로 올라가며 나(me)를 만나면 고리다
+            seen, cursor = set(), target
+            while cursor is not None and cursor not in seen:
+                seen.add(cursor)
+                if cursor == me:
+                    raise HTTPException(
+                        400, f"'{prop['label']}' 가 서로를 가리키게 됩니다. "
+                             "이미 이 항목의 아래에 있는 것을 위로 둘 수 없습니다.")
+                ups = (rows.get(cursor) or {}).get(prop["key"]) or []
+                cursor = ups[0] if ups else None
+
+
 COLL_COLS = "id, project_id, key, title, view, board_by, schema, sort_order, builtin"
 
 
@@ -1627,19 +1690,24 @@ def update_item(iid: int, body: dict, user: dict = Depends(current_user)):
         if not patch:
             raise HTTPException(400, "바꿀 속성이 없습니다")
         old = item["props"] or {}
+        check_relation_cycles(cur, c, item, patch)
         props = {**old, **patch}
         cur.execute("UPDATE items SET props = %s, updated_at = now() WHERE id = %s",
                     (json.dumps(props, ensure_ascii=False), iid))
-        # 실제로 값이 달라진 속성만 이력으로 남긴다 (PLAN 2.6)
+        # 이력은 "고친 기록"이다. 값이 실제로 달라졌고, 비어 있던 칸을 처음 채운 게 아닐 때만 남긴다
+        wrote = False
         for key, after in patch.items():
             before = old.get(key)
-            if before == after:
+            if before == after or is_blank(before):
                 continue
             cur.execute("""INSERT INTO item_events (item_id, user_id, prop, before, after)
                            VALUES (%s, %s, %s, %s, %s)""",
                         (iid, user["id"], key,
                          json.dumps(before, ensure_ascii=False),
                          json.dumps(after, ensure_ascii=False)))
+            wrote = True
+        if wrote:
+            trim_events(cur, iid)
         item, _ = load_item(cur, iid)
         return public_item(item)
 
@@ -1652,6 +1720,21 @@ def delete_item(iid: int, user: dict = Depends(current_user)):
         cur.execute("DELETE FROM items WHERE id = %s", (iid,))
 
 
+ITEM_EVENT_KEEP = 20        # 행마다 남기는 이력 개수. 넘으면 오래된 것부터 지운다
+
+
+def is_blank(v) -> bool:
+    """비어 있는 값(처음 채우는 경우)인지. 이력을 남기지 않는 기준."""
+    return v is None or v == "" or v == [] or v is False
+
+
+def trim_events(cur, iid: int) -> None:
+    cur.execute("""DELETE FROM item_events WHERE item_id = %s AND id NOT IN (
+                       SELECT id FROM item_events WHERE item_id = %s
+                       ORDER BY at DESC, id DESC LIMIT %s)""",
+                (iid, iid, ITEM_EVENT_KEEP))
+
+
 @app.get("/api/items/{iid}/events")
 def list_item_events(iid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
     """행의 변경 이력. 최근 것부터 100개."""
@@ -1660,7 +1743,8 @@ def list_item_events(iid: int, share: str | None = None, user: dict | None = Dep
         check_access(cur, c["project_id"], user, share)
         cur.execute("""SELECT e.id, e.prop, e.before, e.after, e.at, u.display_name AS username
                        FROM item_events e LEFT JOIN users u ON u.id = e.user_id
-                       WHERE e.item_id = %s ORDER BY e.at DESC, e.id DESC LIMIT 100""", (iid,))
+                       WHERE e.item_id = %s ORDER BY e.at DESC, e.id DESC LIMIT %s""",
+                    (iid, ITEM_EVENT_KEEP))
         return rows_to_dicts(cur)
 
 
@@ -2139,9 +2223,60 @@ def delete_images(pid: str, body: ImageIds, share: str | None = None,
     with pool.connection() as conn, conn.cursor() as cur:
         pid = check_write(cur, pid, user, share)
         cur.execute("DELETE FROM images WHERE project_id = %s AND id = ANY(%s)"
-                    " RETURNING length(data)", (pid, body.ids))
-        sizes = [r[0] for r in cur.fetchall()]
-    return {"deleted": len(sizes), "bytes": sum(sizes)}
+                    " RETURNING id, length(data)", (pid, body.ids))
+        rows = cur.fetchall()
+        gone = [r[0] for r in rows]
+        sizes = [r[1] for r in rows]
+        cleaned = strip_image_refs(cur, pid, gone)
+    return {"deleted": len(sizes), "bytes": sum(sizes), "cleaned": cleaned}
+
+
+def strip_image_refs(cur, pid: int, img_ids: list[str]) -> int:
+    """지운 이미지를 가리키던 `![](…/api/images/<id>)` 를 본문에서 걷어낸다.
+
+    이미지는 FK 없이 텍스트로만 이어져 있어서(ERD 의 "문자열로만 연결된 참조"),
+    행을 지워도 본문에는 남아 깨진 그림이 된다. 여기서 같이 치운다.
+    주소는 절대·상대 둘 다 쓰이므로 id 만 보고 지운다.
+    """
+    if not img_ids:
+        return 0
+    ids = "|".join(re.escape(i) for i in img_ids)
+    pattern = r"!@[[^@]]*@]@([^)]*/api/images/(?:" + ids + r")[^)]*@)"
+    pattern = pattern.replace("@", chr(92))
+    changed = 0
+
+    cur.execute("""SELECT id, description FROM nodes
+                   WHERE project_id = %s AND description ~ %s""", (pid, pattern))
+    for nid, text in cur.fetchall():
+        cur.execute("UPDATE nodes SET description = %s WHERE id = %s",
+                    (re.sub(pattern, "", text), nid))
+        changed += 1
+
+    cur.execute("SELECT prd FROM projects WHERE id = %s", (pid,))
+    prd = cur.fetchone()[0] or ""
+    if re.search(pattern, prd):
+        cur.execute("UPDATE projects SET prd = %s WHERE id = %s",
+                    (re.sub(pattern, "", prd), pid))
+        changed += 1
+
+    cur.execute("""SELECT i.id, i.props, c.schema FROM items i
+                   JOIN collections c ON c.id = i.collection_id
+                   WHERE i.project_id = %s AND i.props::text ~ %s""", (pid, pattern))
+    for iid, props, schema in cur.fetchall():
+        props = props or {}
+        hit = False
+        for prop in schema or []:
+            if prop["type"] != "md":
+                continue
+            val = props.get(prop["key"])
+            if isinstance(val, str) and re.search(pattern, val):
+                props[prop["key"]] = re.sub(pattern, "", val)
+                hit = True
+        if hit:
+            cur.execute("UPDATE items SET props = %s WHERE id = %s",
+                        (json.dumps(props, ensure_ascii=False), iid))
+            changed += 1
+    return changed
 
 
 @app.get("/api/images/{img_id}")
@@ -2231,7 +2366,8 @@ def oauth_login_page(request_id: str, client_name: str, error: str = "", status:
     error_html = f'<p class="error">{html.escape(error)}</p>' if error else ""
     body = f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>얼개 플래너 연결</title><style>
+<title>Olgae 연결</title>
+<link rel="icon" type="image/png" href="/favicon.png"><style>
 body{{margin:0;background:#f4f5f7;color:#202124;font-family:system-ui,sans-serif}}
 main{{max-width:420px;margin:10vh auto;padding:28px;background:white;border:1px solid #ddd;border-radius:16px}}
 h1{{font-size:24px;margin:0 0 10px}} p{{line-height:1.55;color:#666}}

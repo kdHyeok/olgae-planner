@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>얼개 플래너</title>
+<title>Olgae | 기획 관리 도구</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/favicon.png">
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background: #f4f4f2; color: #333; }
@@ -22,7 +24,7 @@
   .ibtn { display: inline-flex; align-items: center; justify-content: center;
     width: 42px; height: 36px; padding: 0 !important; flex: none; }
   .ibtn svg { flex: none; }
-  .logo-btn { width: 48px; height: 38px; }
+  .btn.logo-btn { width: auto; height: 38px; border-color: transparent; background: transparent; }
   .logo-btn img { display: block; }
   .ibtn.plain { border-color: transparent; background: transparent; cursor: default; }
   .ghost { border: 1px dashed #cfcfc8 !important; background: rgba(255,255,255,.5) !important;
@@ -212,6 +214,12 @@
   .btn.goto:hover { background: #e8edfb; }
   .desc-md a, .prd-doc a, #termtip a, .gdesc a { color: #2f62c4; text-decoration: underline; }
   .md-tw { overflow-x: auto; margin: 10px 0; }
+  .md-code { background: #f6f6f3; border: 1px solid #ececea; border-radius: 6px; padding: 10px 12px;
+    overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 8px 0; }
+  .md-hr { border: 0; border-top: 1px solid #e5e5e0; margin: 14px 0; }
+  blockquote { margin: 8px 0; padding: 2px 0 2px 12px; border-left: 3px solid #e2e2dd; color: #666; }
+  ol { padding-left: 22px; margin: 8px 0; }
+  li > ul, li > ol { margin: 2px 0; }
   .md-tw table { border-collapse: collapse; font-size: 13px; }
   .md-tw th, .md-tw td { border: 1px solid #e2e2dd; padding: 6px 11px; line-height: 1.6; }
   .md-tw th { background: #f6f6f3; font-weight: 600; white-space: nowrap; }
@@ -306,6 +314,14 @@
     border-bottom: 1px solid #f0f0ec; }
   .tplrow.on { opacity: .45; }
   .tplrow .nm { flex: 1; }
+  .kindbar { display: flex; gap: 6px; margin: 0 0 14px; }
+  .kindpick { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 13px;
+    border: 1px solid #e2e2dd; background: #fff; border-radius: 999px; cursor: pointer; font-family: inherit; }
+  .kindpick:hover { border-color: #c9c9c2; }
+  .kindpick.on { background: #333; color: #fff; border-color: #333; }
+  .kindpick .ic { font-weight: 700; }
+  .kind .ic { margin-right: 3px; font-weight: 700; }
+  .tico { display: inline-block; width: 1.2em; font-weight: 700; color: #888; text-align: center; }
   .flash { animation: flash 1.2s ease-out; }
   @keyframes flash { from { background: #fff6d8; } to { background: transparent; } }
   .md-cell p { margin: 4px 0; } .md-cell ul { padding-left: 18px; margin: 4px 0; }
@@ -333,7 +349,7 @@
 <body>
 <header>
   <div class="hgroup">
-    <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.svg" alt="얼개 플래너" height="28"></button>
+    <button class="btn ibtn logo-btn" id="btn-projects" title="내 프로젝트" aria-label="내 프로젝트"><img src="/logo.png" alt="Olgae" height="28"></button>
     <b id="proj-name"></b>
     <button class="btn ibtn" id="btn-glossary" onclick="openGlossary()" title="용어 사전" aria-label="용어 사전"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5.2 8.5 4.5 6 4.5H3v14h3c2.5 0 4.5.7 6 2 1.5-1.3 3.5-2 6-2h3v-14h-3c-2.5 0-4.5.7-6 2z"/><path d="M12 6.5v12"/></svg></button>
     <button class="btn ibtn" id="btn-save" onclick="saveVersion()" title="현재 상태 저장 (PRD + 기능명세서)" aria-label="현재 상태 저장"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M8 4v5h6V4"/><path d="M8 21v-6h8v6"/></svg></button>
@@ -812,8 +828,14 @@ function inline(raw) {
 function md(text) {
   const lines = text.split('\n');
   const out = [];
-  let ul = false;
-  const closeUl = () => { if (ul) { out.push('</ul>'); ul = false; } };
+  // 열려 있는 목록 태그를 깊이 순서대로 쌓아 둔다 (중첩 불릿·번호 목록)
+  const stack = [];
+  const closeList = (to = 0) => { while (stack.length > to) out.push(`</${stack.pop()}>`); };
+  const openList = (tag, depth) => {
+    closeList(depth + 1);
+    if (stack.length === depth + 1 && stack[depth] !== tag) { out.push(`</${stack.pop()}>`); }
+    while (stack.length < depth + 1) { out.push(`<${tag}>`); stack.push(tag); }
+  };
   const isRow = s => /^\s*\|.*\|\s*$/.test(s);
   const cellsOf = s => s.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
   const isSep = s => isRow(s) && cellsOf(s).every(c => /^:?-{2,}:?$/.test(c));
@@ -827,7 +849,7 @@ function md(text) {
     if (isRow(t)) {
       const sepAt = skipBlank(i + 1);
       if (sepAt < lines.length && isSep(lines[sepAt])) {
-        closeUl();
+        closeList();
         const align = cellsOf(lines[sepAt]).map(c =>
           c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : 'left');
         const cell = (c, x, tag) =>
@@ -847,17 +869,42 @@ function md(text) {
       }
     }
 
-    if (t.startsWith('- ')) {
-      if (!ul) { out.push('<ul>'); ul = true; }
-      out.push('<li>' + inline(t.slice(2)) + '</li>');
+    // ``` 코드 블록 — 안쪽은 문법을 해석하지 않고 그대로 보여 준다
+    if (t.startsWith('```')) {
+      closeList();
+      const buf = [];
+      let k = i + 1;
+      while (k < lines.length && !lines[k].trim().startsWith('```')) buf.push(lines[k++]);
+      out.push(`<pre class="md-code"><code>${esc(buf.join('\n'))}</code></pre>`);
+      i = k;
       continue;
     }
-    closeUl();
+    // --- 또는 *** → 구분선
+    if (/^(-{3,}|\*{3,})$/.test(t)) { closeList(); out.push('<hr class="md-hr">'); continue; }
+    // > 인용
+    if (t.startsWith('> ') || t === '>') {
+      closeList();
+      const buf = [];
+      let k = i;
+      while (k < lines.length && /^\s*>/.test(lines[k])) buf.push(lines[k++].replace(/^\s*>\s?/, ''));
+      out.push(`<blockquote>${md(buf.join('\n'))}</blockquote>`);
+      i = k - 1;
+      continue;
+    }
+    // 목록: "- " 불릿과 "1. " 번호. 앞 공백 2칸마다 한 단계씩 들여쓴다
+    const li = lines[i].match(/^(\s*)(-|\*|\d+\.)\s+(.*)$/);
+    if (li) {
+      const depth = Math.floor(li[1].replace(/\t/g, '  ').length / 2);
+      openList(li[2] === '-' || li[2] === '*' ? 'ul' : 'ol', depth);
+      out.push('<li>' + inline(li[3]) + '</li>');
+      continue;
+    }
+    closeList();
     const h = t.match(/^(#{1,6})\s+(.*)/);
     if (h) out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
     else out.push('<p>' + inline(t) + '</p>');
   }
-  closeUl();
+  closeList();
   return out.join('');
 }
 
@@ -2777,7 +2824,13 @@ function scrollToColl(id) {
   document.getElementById('coll-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 // ---------- 표 설정: 이름 · 보기 · 속성 (PLAN 3.1) ----------
-const TYPE_LABEL = { text: '한 줄 글', md: '마크다운', select: '선택', checkbox: '체크', relation: '관련' };
+// 속성 타입 아이콘 — 표 설정에서 무엇을 고르는지 한눈에 (T 글자 · ¶ 문단 · ▾ 목록 · ☑ 체크 · ↗ 연결)
+const TYPE_ICON = { text: 'T', md: '¶', select: '▾', checkbox: '☑', relation: '↗' };
+const TYPE_LABEL = { text: 'T  한 줄 글', md: '¶  마크다운', select: '▾  선택',
+                     checkbox: '☑  체크', relation: '↗  관련' };
+// 작업 종류 아이콘. 사용자가 옵션 이름을 바꾸면 첫 글자를 쓴다
+const KIND_ICON = { '작업': '●', '에픽': '◈', '이슈': '!', '버그': '!', '할일': '●' };
+const kindIcon = v => KIND_ICON[v] || (v || '·').slice(0, 1);
 const VIEW_LABEL = { document: '문서', table: '표', board: '칸반' };
 let collEdit = null;      // { cid, title, view, board_by, schema: [...] }
 
@@ -2851,7 +2904,7 @@ function collSettingsHTML() {
     <b style="font-size:13px">속성 ${collEdit.schema.length}</b>
     <div style="margin:6px 0 10px">${collEdit.schema.map((p, i) => `<div class="prow">
         <div><input type="text" value="${esc(p.label)}" oninput="collEdit.schema[${i}].label=this.value"
-            style="width:100%"><div class="keyhint">${esc(p.key)}</div></div>
+            style="width:100%"><div class="keyhint"><span class="tico">${TYPE_ICON[p.type] || ''}</span>${esc(p.key)}</div></div>
         <select onchange="collEditSet(${i},'type',this.value)">
           ${Object.entries(TYPE_LABEL).map(([t, l]) =>
             `<option value="${t}" ${t === p.type ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -3051,7 +3104,7 @@ function cardHTML(it, k) {
   return `<div class="bcard${flashCls(it.seq)}" data-item="${it.id}" ${canEdit() ? `draggable="true"
       ondragstart="boardDragStart(event,${it.id})" ondragend="this.classList.remove('dragging')"` : ''}
       onclick="openItem(${it.id})">
-    <div class="top">${seqChip(it.seq)}${kind ? `<span class="kind">${esc(kind)}</span>` : ''}</div>
+    <div class="top">${seqChip(it.seq)}${kind ? `<span class="kind"><span class="ic">${esc(kindIcon(kind))}</span>${esc(kind)}</span>` : ''}</div>
     <div class="ttl">${esc(itemTitle(it, k)) || '<span class="hint">(제목 없음)</span>'}</div>
     <div class="foot">${childProgress(k, it)}${refBadge(it.seq)}</div>
   </div>`;
@@ -3155,7 +3208,7 @@ function editItemProp(e, el, iid, key) {
 }
 // ---------- relation 편집기 (PLAN 2.2) ----------
 // 칩 목록에서 ✕ 로 빼고, "+ 연결" 로 검색해 넣는다. 값은 번호(seq) 배열
-let relPick = { iid: null, key: null, q: '' };
+let relPick = { iid: null, key: null, q: '', child: false };
 
 async function relRemove(iid, key, seq) {
   const it = findItem(iid); if (!it) return;
@@ -3164,8 +3217,39 @@ async function relRemove(iid, key, seq) {
 }
 function openRelPicker(iid, key) {
   if (!needEdit()) return;
-  relPick = { iid, key, q: '' };
+  relPick = { iid, key, q: '', child: false };
   showModal(relPickerHTML);
+}
+// 하위 작업 고르기. 고른 쪽의 "상위 작업" 에 내가 들어간다
+function openChildPicker(iid) {
+  if (!needEdit()) return;
+  const it = findItem(iid); if (!it) return;
+  const prop = selfRefProp(collById(it._cid)); if (!prop) return;
+  relPick = { iid, key: prop.key, q: '', child: true };
+  showModal(relPickerHTML);
+}
+// 나와 내 위쪽 조상들은 하위가 될 수 없다(고리). 서버도 막지만 고를 수 없게 미리 거른다
+function ancestorSeqs(k, seq) {
+  const prop = selfRefProp(k);
+  if (!prop) return new Set();
+  const out = new Set();
+  let cursor = seq, guard = 0;
+  while (cursor != null && guard++ < 100) {
+    const row = (collItems.get(k.id) || []).find(x => x.seq === cursor);
+    const ups = row && ((row.props || {})[prop.key] || []);
+    cursor = ups && ups.length ? ups[0] : null;
+    if (cursor != null) out.add(cursor);
+  }
+  return out;
+}
+function descendantSeqs(k, seq) {
+  const out = new Set();
+  const walk = x => childrenOfItem(k, x).forEach(c => {
+    if (out.has(c.seq)) return;
+    out.add(c.seq); walk(c.seq);
+  });
+  walk(seq);
+  return out;
 }
 function relPickQuery(v) {
   relPick.q = v;
@@ -3181,18 +3265,27 @@ function relCandidates() {
   const match = c => !q || String(c.seq).includes(q) || (c.title || '').toLowerCase().includes(q)
     || seqLabel(c.seq).toLowerCase().includes(q);
   let out = [];
-  if (!prop.target)
+  if (!prop.target && !relPick.child)
     out = nodes.filter(n => n.seq != null).map(n => ({ kind: 'node', seq: n.seq, title: n.title, group: '기능명세서' }));
   for (const [cid, arr] of collItems) {
     const k = collById(cid);
     if (prop.target && k.key !== prop.target) continue;
     out = out.concat(arr.map(x => ({ kind: 'item', seq: x.seq, title: itemTitle(x, k), group: k.title })));
   }
+  // 자기 표를 가리키는 관계라면 고리가 될 후보를 뺀다
+  if (it && coll && prop.target === coll.key) {
+    const bad = new Set([it.seq,
+      ...(relPick.child ? ancestorSeqs(coll, it.seq) : descendantSeqs(coll, it.seq))]);
+    out = out.filter(c => !bad.has(c.seq));
+  }
   return out.filter(match).slice(0, 60);
 }
 function relCandidatesHTML() {
   const it = findItem(relPick.iid);
-  const cur = ((it || {}).props || {})[relPick.key] || [];
+  const coll0 = it && collById(it._cid);
+  const cur = relPick.child
+    ? childrenOfItem(coll0, it.seq).map(x => x.seq)
+    : (((it || {}).props || {})[relPick.key] || []);
   const list = relCandidates();
   if (!list.length) return '<p style="color:#aaa;padding:12px 0">찾는 항목이 없습니다.</p>';
   return list.map(c => {
@@ -3206,6 +3299,7 @@ function relCandidatesHTML() {
 }
 async function relAdd(seq) {
   const it = findItem(relPick.iid); if (!it) return;
+  if (relPick.child) { await addChild(relPick.iid, seq); paintModal(); return; }
   const cur = (it.props || {})[relPick.key] || [];
   if (cur.includes(seq)) return;
   await setItemProp(relPick.iid, relPick.key, [...cur, seq]);
@@ -3216,6 +3310,21 @@ function relPickerHTML() {
   const coll = it && collById(it._cid);
   const prop = (coll && coll.schema || []).find(x => x.key === relPick.key) || { label: '관련' };
   const cur = ((it || {}).props || {})[relPick.key] || [];
+  if (relPick.child) {
+    const kids = childrenOfItem(coll, (it || {}).seq);
+    return `<h3 style="margin-bottom:6px">하위 작업 추가</h3>
+      <p class="hint" style="margin:0 0 12px">고른 항목의 <b>${esc(prop.label)}</b> 에 이 항목이 들어갑니다 —
+        한쪽만 정하면 양쪽에 다 반영됩니다. 고리가 생기는 항목은 목록에 나오지 않습니다.</p>
+      <div class="backrefs" style="margin:0 0 12px">${kids.length
+        ? kids.map(x => `<span class="refchip item"><b>${esc(seqLabel(x.seq))}</b><span class="rt">${esc(itemTitle(x, coll))}</span>
+            <span class="x" title="하위에서 빼기" onclick="removeChild(${relPick.iid},${x.seq})">✕</span></span>`).join('')
+        : '<span class="hint" style="margin:0">아직 하위 작업이 없습니다.</span>'}</div>
+      <input type="text" placeholder="번호나 제목으로 검색…" value="${esc(relPick.q)}"
+        style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;margin-bottom:8px"
+        oninput="relPickQuery(this.value)">
+      <div id="rel-list" style="max-height:44vh;overflow:auto">${relCandidatesHTML()}</div>
+      <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="closeModal()">닫기</button></div>`;
+  }
   return `<h3 style="margin-bottom:6px">${esc(prop.label)} 연결</h3>
     <p class="hint" style="margin:0 0 12px">${prop.target ? `<b>${esc((colls.find(c => c.key === prop.target) || {}).title || prop.target)}</b> 표의 행만 연결할 수 있습니다.` : '기능과 표의 행을 모두 연결할 수 있습니다.'}</p>
     <div class="backrefs" style="margin:0 0 12px">${cur.length
@@ -3245,7 +3354,12 @@ async function setItemProp(iid, key, value) {
 async function addItem(cid, preset) {
   if (!needEdit()) return;
   const coll = collById(cid); if (!coll) return;
-  const props = { ...(coll.view === 'document' ? { title: '새 섹션', body: '' } : {}), ...(preset || {}) };
+  // 고르는 값을 비워 두면 "미지정" 으로 떠서 헷갈린다. 첫 옵션을 기본값으로 넣는다
+  const defaults = {};
+  for (const c of coll.schema || [])
+    if (c.type === 'select' && (c.options || []).length) defaults[c.key] = c.options[0];
+  const props = { ...defaults, ...(coll.view === 'document' ? { title: '새 섹션', body: '' } : {}),
+                  ...(preset || {}) };
   try {
     const it = await api(`/api/collections/${cid}/items`, { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ props }) });
@@ -3274,15 +3388,43 @@ async function openItem(iid) {
 }
 function setItemTab(t) { itemView.tab = t; paintModal(); }
 const propValueHTML = (it, c) => {
-  const v = (it.props || {})[c.key];
+  const v = (it.props || {})[c.key], ro = canEdit() ? '' : 'disabled';
   switch (c.type) {
-    case 'select': return v ? `<span class="pill">${esc(v)}</span>` : '<span class="hint">—</span>';
-    case 'checkbox': return v ? '✓' : '<span class="hint">—</span>';
+    // 고르는 값은 눌러서 바로 바꾼다 (예전에는 더블클릭해 글자로 고쳐야 했다)
+    case 'select':
+      return `<select class="pill-select" ${ro} onchange="setItemProp(${it.id},'${c.key}',this.value||null)">
+        <option value="" ${v ? '' : 'selected'}>—</option>
+        ${(c.options || []).map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+    case 'checkbox':
+      return `<input type="checkbox" ${v ? 'checked' : ''} ${ro}
+        onchange="setItemProp(${it.id},'${c.key}',this.checked)">`;
     case 'md': return (v || '').trim() ? md(v) : '<span class="hint">—</span>';
     case 'relation': return (v || []).map(refChip).join(' ') || '<span class="hint">—</span>';
     default: return v ? esc(String(v)) : '<span class="hint">—</span>';
   }
 };
+// 자기 표를 가리키는 relation(상위 작업). 하위는 저장하지 않고 이걸 뒤집어 구한다
+const selfRefProp = k => (k.schema || []).find(x => x.type === 'relation' && x.target === k.key);
+function childrenOfItem(k, seq) {
+  const prop = selfRefProp(k);
+  if (!prop) return [];
+  return (collItems.get(k.id) || []).filter(x => ((x.props || {})[prop.key] || []).includes(seq));
+}
+// 하위로 넣는다 = 그 행의 "상위 작업" 에 나를 적는다. 그래서 양쪽이 저절로 맞는다
+async function addChild(parentIid, childSeq) {
+  const parent = findItem(parentIid); if (!parent) return;
+  const k = collById(parent._cid), prop = selfRefProp(k);
+  const child = (collItems.get(k.id) || []).find(x => x.seq === childSeq);
+  if (!child || !prop) return;
+  await setItemProp(child.id, prop.key, [...new Set([...((child.props || {})[prop.key] || []), parent.seq])]);
+}
+async function removeChild(parentIid, childSeq) {
+  const parent = findItem(parentIid); if (!parent) return;
+  const k = collById(parent._cid), prop = selfRefProp(k);
+  const child = (collItems.get(k.id) || []).find(x => x.seq === childSeq);
+  if (!child || !prop) return;
+  await setItemProp(child.id, prop.key, ((child.props || {})[prop.key] || []).filter(x => x !== parent.seq));
+}
 const evValue = v => v == null || v === '' ? '(비움)'
   : Array.isArray(v) ? v.map(x => seqLabel(x)).join(', ')
   : typeof v === 'boolean' ? (v ? '✓' : '✗')
@@ -3309,14 +3451,30 @@ function itemHTML() {
            onkeydown="if(event.key==='Enter')addItemComment()">
          <button class="btn primary" onclick="addItemComment()">등록</button></div>`
         : '<p class="hint">코멘트를 작성하려면 로그인하세요.</p>'}`
-    : `<dl class="idet" style="margin:0">${cols.map(c => `<dt>${esc(c.label)}</dt>
-        <dd ${c.type === 'relation'
+    : (() => {
+        const selfProp = selfRefProp(k);
+        const kids = childrenOfItem(k, it.seq);
+        // 종류는 맨 위에서 아이콘으로 고른다. 아래 목록에서는 뺀다
+        const kindProp = cols.find(c => c.key === 'kind' && c.type === 'select');
+        const rest = cols.filter(c => c !== kindProp);
+        const kindBar = kindProp ? `<div class="kindbar">${(kindProp.options || []).map(o => `
+          <button class="kindpick ${((it.props || {})[kindProp.key]) === o ? 'on' : ''}"
+            ${canEdit() ? `onclick="setItemProp(${it.id},'${kindProp.key}','${o}')"` : 'disabled'}>
+            <span class="ic">${esc(kindIcon(o))}</span>${esc(o)}</button>`).join('')}</div>` : '';
+        return kindBar + `<dl class="idet" style="margin:0">${rest.map(c => `<dt>${esc(c.label)}</dt>
+        <dd ${['relation', 'select', 'checkbox'].includes(c.type)
             ? ''
             : `ondblclick="editItemProp(event,this,${it.id},'${c.key}')" title="더블클릭하여 수정" style="cursor:text"`}>
           ${propValueHTML(it, c)}
           ${c.type === 'relation' && canEdit() ? `<button class="mv" title="연결 편집" onclick="openRelPicker(${it.id},'${c.key}')">＋</button>` : ''}
-        </dd>`).join('')}</dl>
-       ${backrefsHTML(it.seq)}`;
+        </dd>`).join('')}
+        ${selfProp ? `<dt>하위 작업</dt><dd>${kids.map(x => `
+          <span class="refchip item"><b>${esc(seqLabel(x.seq))}</b><span class="rt">${esc(itemTitle(x, k))}</span>
+            ${canEdit() ? `<span class="x" title="하위에서 빼기" onclick="removeChild(${it.id},${x.seq})">✕</span>` : ''}</span>`).join('')
+          || '<span class="hint">—</span>'}
+          ${canEdit() ? `<button class="mv" title="하위 작업 추가" onclick="openChildPicker(${it.id})">＋</button>` : ''}</dd>` : ''}
+        </dl>${backrefsHTML(it.seq)}`;
+      })();
 
   const tabBtn = (id, label, n) => `<button class="btn ${t === id ? 'primary' : ''}"
     style="padding:4px 12px;font-size:12px" onclick="setItemTab('${id}')">${label}${n ? ` ${n}` : ''}</button>`;
