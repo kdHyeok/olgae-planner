@@ -257,6 +257,57 @@
   .coll-table .c-seq { width: 72px; } .coll-table .c-act { width: 100px; white-space: nowrap; text-align: right; }
   .coll-table .c-md { min-width: 260px; }
   .md-cell, .text-cell, .rel-cell { cursor: text; min-height: 18px; }
+  /* ---- [[P1-14]] 링크 칩 (PLAN 2.1) ---- */
+  .refchip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 1.5;
+    padding: 1px 8px; border-radius: 10px; cursor: pointer; white-space: nowrap;
+    background: #e8eefb; color: #2f62c4; border: 1px solid #d4e0f7; }
+  .refchip:hover { background: #d8e4fa; }
+  .refchip.item { background: #e6f0e6; color: #3e7a3e; border-color: #d2e6d2; }
+  .refchip b { font-family: ui-monospace, monospace; font-weight: 600; }
+  .refchip .rt { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .refchip.miss { background: #f5f0f0; color: #a06a6a; border-color: #e6d8d8;
+    text-decoration: line-through; cursor: help; }
+  .refchip .x { color: inherit; opacity: .55; font-weight: 700; padding: 0 2px; }
+  .refchip .x:hover { opacity: 1; }
+  .refbadge { font-size: 11px; color: #888; cursor: pointer; white-space: nowrap; }
+  .refbadge:hover { color: #2f62c4; text-decoration: underline; }
+  .backrefs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0 0; }
+  .backrefs .lbl { font-size: 12px; color: #888; }
+  .pickrow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f0f0ec; cursor: pointer; }
+  .pickrow:hover { background: #fafaf8; }
+  .pickrow.on { opacity: .45; cursor: default; }
+  .trace td { vertical-align: top; }
+  /* ---- 칸반 (PLAN 2.5) ---- */
+  .board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; align-items: flex-start; }
+  .bcol { flex: 1 0 240px; min-width: 240px; background: #f4f4f1; border-radius: 10px; padding: 10px; }
+  .bcol.over { background: #e8eefb; outline: 2px dashed #b9cbf0; }
+  .bcol h4 { font-size: 13px; margin: 0 0 8px; color: #666; display: flex; justify-content: space-between; }
+  .bcard { background: #fff; border: 1px solid #e5e5e0; border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; cursor: pointer; }
+  .bcard:hover { border-color: #c9c9c2; }
+  .bcard .top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .bcard .ttl { font-size: 14px; line-height: 1.4; word-break: break-word; }
+  .bcard .foot { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .kind { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: #eee; color: #666; }
+  .prog { font-size: 11px; color: #888; }
+  .bcard.dragging { opacity: .4; }
+  /* ---- 행 상세 모달 (2.6·2.7) ---- */
+  .idet dt { font-size: 12px; color: #888; margin-top: 12px; }
+  .idet dd { margin: 4px 0 0; }
+  .ev { display: flex; gap: 8px; font-size: 12px; color: #666; padding: 6px 0; border-bottom: 1px solid #f4f4f1; }
+  .ev .when { color: #aaa; white-space: nowrap; }
+  /* ---- 표 설정 · 표 추가 (PLAN 3.1·3.2) ---- */
+  .prow { display: grid; grid-template-columns: 1fr 120px 1fr auto; gap: 6px; align-items: center;
+    padding: 6px 0; border-bottom: 1px solid #f4f4f1; }
+  .prow input, .prow select { padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px;
+    font-size: 13px; font-family: inherit; min-width: 0; }
+  .prow .keyhint { font-size: 11px; color: #aaa; font-family: ui-monospace, monospace; }
+  .tplrow { display: flex; align-items: center; gap: 10px; padding: 10px 0;
+    border-bottom: 1px solid #f0f0ec; }
+  .tplrow.on { opacity: .45; }
+  .tplrow .nm { flex: 1; }
+  .flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { background: #fff6d8; } to { background: transparent; } }
   .md-cell p { margin: 4px 0; } .md-cell ul { padding-left: 18px; margin: 4px 0; }
   .inline-edit.md-edit { min-height: 30vh; }
   .mv.danger { color: #b0392c; } .mv[disabled] { opacity: .3; cursor: default; }
@@ -700,7 +751,7 @@ async function doLogout() {
 // nodes 를 받을 때 한 번만 인덱스를 만들어 두고 재사용한다 (예전엔 호출마다 전체 배열을 훑었다)
 let kidsMap = null, nodeMap = null;
 const NO_KIDS = [];
-function setNodes(list) { nodes = list; kidsMap = nodeMap = null; }
+function setNodes(list) { nodes = list; kidsMap = nodeMap = null; seqMap = null; }
 function buildIndex() {
   kidsMap = new Map(); nodeMap = new Map();
   for (const n of nodes) {
@@ -749,6 +800,8 @@ function inline(raw) {
   // `용어` → 용어 사전 링크
   t = t.replace(/`([^`\n]{1,60})`/g, (m, w) =>
     stash(`<span class="term" data-term="${w.trim()}" onclick="openGlossary()">${w}</span>`));
+  // [[P1-14]] → 링크 칩. 번호만 보고 찾으므로 앞의 키가 달라도 해석한다 (PLAN §6)
+  t = t.replace(/\[\[([A-Za-z][A-Za-z0-9]*)-(\d+)\]\]/g, (m, key, num) => stash(refChip(+num)));
   // **굵게** / *기울임* / _기울임_
   t = t.replace(/\*\*([^*\n]+)\*\*/g, (m, w) => stash(`<strong>${w}</strong>`));
   t = t.replace(/\*([^*\n]+)\*/g, (m, w) => stash(`<em>${w}</em>`));
@@ -1903,11 +1956,31 @@ function viewParams() {
   return view === 'dir' ? ['tab=spec', 'view=dir'] : ['tab=spec'];
 }
 // 주소의 tab·view 를 상태로. 없으면 기본값(PRD · 트리)
+// ?item=/?node= 로 들어왔을 때 찾아갈 번호 (PLAN 2.8).
+// 첫 렌더의 syncUrl 이 주소에서 이 값을 지우므로 스크립트가 로드될 때 미리 잡아 둔다
+let pendingSeq = (() => {
+  const q = new URLSearchParams(location.search);
+  const n = Number(q.get('item') || q.get('node'));
+  return Number.isInteger(n) && n > 0 ? n : null;
+})();
 function readViewParams() {
   const q = new URLSearchParams(location.search);
   const t = q.get('tab');
   tab = t === 'spec' ? 'spec' : t === 'tasks' ? 'tasks' : 'prd';
   view = q.get('view') === 'dir' ? 'dir' : 'tree';
+  const n = Number(q.get('item') || q.get('node'));
+  if (Number.isInteger(n) && n > 0) pendingSeq = n;   // 없으면 미리 잡아 둔 값을 지우지 않는다
+}
+// 데이터가 다 로드된 뒤에 부른다. gotoSeq 가 탭까지 맞춘다
+function applyPendingSeq() {
+  if (pendingSeq == null) return;
+  const seq = pendingSeq;
+  pendingSeq = null;
+  // 첫 로드 직후에는 다른 렌더가 뒤따라 강조가 지워진다. 한 박자 뒤에 찾아간다
+  setTimeout(() => {
+    if (seqInfo(seq)) gotoSeq(seq);
+    else toast(`${seqLabel(seq)} 를 찾을 수 없습니다.`);
+  }, 150);
 }
 function routePath() {
   // 공유 링크는 프로젝트 id 를 드러내지 않는다 — 토큰 + 보고 있는 화면만
@@ -1953,7 +2026,7 @@ async function applyRoute() {
   }
   project = null; admin.open = false;
 }
-window.addEventListener('popstate', async () => { await applyRoute(); render(); });
+window.addEventListener('popstate', async () => { await applyRoute(); render(); applyPendingSeq(); });
 
 function render() {
   syncUrl();
@@ -2093,6 +2166,8 @@ function renderProjects(c) {
              <button class="btn danger" onclick="twoStep('share:${p.slug}', () => dropShare('${p.slug}'))">${askLabel('share:' + p.slug, '링크 해제')}</button>`
           : `<button class="btn" onclick="makeShare('${p.slug}')">공유 링크 생성</button>`) : ''}
         ${owns ? `<button class="btn" onclick="renameProject('${p.slug}')">이름 변경</button>` : ''}
+        ${mine ? `<button class="btn" title="번호 앞부분 (${esc(p.key || 'P')}-14). 바꿔도 링크는 안 깨집니다"
+          onclick="editProjectKey('${p.slug}')">키 ${esc(p.key || 'P')}</button>` : ''}
         ${owns ? `<button class="btn" onclick="openMembers('${p.slug}')">멤버 관리${p.pending ? ` <span class="pill off">${p.pending}</span>` : ''}</button>` : ''}
         ${mine ? `<button class="btn danger" onclick="twoStep('proj:${p.slug}', () => deleteProject('${p.slug}'))">${askLabel('proj:' + p.slug, '삭제')}</button>` : ''}
       </div>`;
@@ -2195,6 +2270,32 @@ function renameProject(slug) {
     else if (e.key === 'Enter') { e.preventDefault(); finish(true); }
   });
 }
+// 번호 앞부분(P1-14 의 P1). 링크는 번호 기준이라 키를 바꿔도 안 깨진다 (PLAN 3.5·D1)
+function editProjectKey(slug) {
+  const cur = projects.find(p => p.slug === slug); if (!cur) return;
+  showModal(() => `<h3 style="margin-bottom:6px">프로젝트 키</h3>
+    <p class="hint" style="margin:0 0 14px">기능·표 행·작업 번호의 앞부분입니다 —
+      <b>${esc(cur.key || 'P')}-14</b>. 영문 대문자로 시작하는 2~5자(영문·숫자).<br>
+      바꿔도 링크는 번호 기준이라 <b>깨지지 않습니다</b>. 이미 내보낸 마크다운의 표기만 옛것으로 남습니다.</p>
+    <input type="text" id="pkey" value="${esc(cur.key || '')}" maxlength="5" placeholder="PLNT"
+      style="width:160px;padding:8px;border:1px solid #ddd;border-radius:6px;font-family:ui-monospace,monospace;text-transform:uppercase"
+      onkeydown="if(event.key==='Enter')saveProjectKey('${slug}')">
+    <div class="btnrow" style="margin-top:16px">
+      <button class="btn primary" onclick="saveProjectKey('${slug}')">저장</button>
+      <button class="btn" onclick="closeModal()">닫기</button></div>`);
+}
+async function saveProjectKey(slug) {
+  const key = (document.getElementById('pkey').value || '').trim().toUpperCase();
+  try {
+    await api(`/api/projects/${slug}/key`, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+    await loadProjects();
+    if (project && project.slug === slug) project.key = key;
+    closeModal(); render();
+    toast(`번호 앞부분을 ${key} 로 바꿨습니다.`);
+  } catch (e) { toast(e.detail || '키 변경 실패'); }
+}
+
 async function deleteProject(slug) {
   await api('/api/projects/' + slug, { method: 'DELETE' });
   await loadProjects(); render();
@@ -2439,6 +2540,7 @@ function detailBody(n, withClose) {
       <select class="pill-select" onchange="saveField(${n.id},'importance',+this.value)">
         ${MOSCOW.map(m => `<option value="${m.v}" ${m.v === n.importance ? 'selected' : ''}>${m.ko} (${m.en})</option>`).join('')}</select>
     </div>
+    ${backrefsHTML(n.seq, '이 기능을 가리키는 항목')}
     <hr class="sep">
     <div class="desc-md" title="더블클릭하여 수정" ondblclick="descClick(event,this,${n.id})">
       ${md(n.description) || '<p class="ph">설명이 없습니다. 클릭하여 작성하세요.</p>'}</div>
@@ -2566,11 +2668,86 @@ async function loadCollections() {
   colls = await api(`/api/projects/${project.slug}/collections`).catch(() => []);
   const lists = await Promise.all(colls.map(c => api(`/api/collections/${c.id}/items`).catch(() => [])));
   collItems = new Map(colls.map((c, i) => [c.id, lists[i].map(x => ({ ...x, _cid: c.id }))]));
+  seqMap = null;
 }
 async function reloadItems(cid) {
   const list = await api(`/api/collections/${cid}/items`).catch(() => []);
   collItems.set(cid, list.map(x => ({ ...x, _cid: cid })));
+  seqMap = null;
 }
+// 번호(seq) → 무엇인지. 노드와 행이 번호 공간을 공유한다 (PLAN §6)
+let seqMap = null;
+function buildSeqMap() {
+  seqMap = new Map();
+  for (const n of nodes) if (n.seq != null) seqMap.set(n.seq, { kind: 'node', seq: n.seq, id: n.id, title: n.title });
+  for (const [cid, arr] of collItems)
+    for (const it of arr) seqMap.set(it.seq, { kind: 'item', seq: it.seq, id: it.id, cid, title: itemTitle(it, collById(cid)) });
+}
+// 어떤 행을 잠깐 노랗게 강조할지. DOM 에 class 를 얹으면 다음 렌더에 지워져서 상태로 둔다
+let flashSeq = null;
+function flashRow(seq) {
+  flashSeq = seq;
+  render();
+  setTimeout(() => { if (flashSeq === seq) { flashSeq = null; render(); } }, 1400);
+}
+const flashCls = seq => seq === flashSeq ? ' flash' : '';
+
+function seqInfo(seq) {
+  if (!seqMap) buildSeqMap();
+  return seqMap.get(seq);
+}
+// 인라인 링크 칩. 못 찾으면 조용히 사라지지 않고 빗금 칩으로 남긴다
+function refChip(seq) {
+  const label = esc(seqLabel(seq));
+  const hit = seqInfo(seq);
+  if (!hit) return `<span class="refchip miss" title="이 번호를 가진 항목이 없습니다 (지워졌을 수 있습니다)">${label}</span>`;
+  const kindKo = hit.kind === 'node' ? '기능' : (collById(hit.cid) || {}).title || '표';
+  return `<span class="refchip ${hit.kind}" onclick="event.stopPropagation();gotoSeq(${seq})"
+    title="${esc(kindKo)} · ${esc(hit.title || '')}"><b>${label}</b><span class="rt">${esc(hit.title || '')}</span></span>`;
+}
+// 칩을 누르면 그 항목으로. 탭까지 바꿔서 찾아간다
+function gotoSeq(seq) {
+  const hit = seqInfo(seq);
+  if (!hit) return toast('그 번호를 가진 항목이 없습니다.');
+  if (hit.kind === 'node') {
+    tab = 'spec'; selectedId = hit.id; render();
+    setTimeout(() => document.querySelector(`.node-card[data-id="${hit.id}"], .dir-item[data-id="${hit.id}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+    return;
+  }
+  const k = collById(hit.cid);
+  tab = k && k.key === 'tasks' ? 'tasks' : 'prd';
+  flashRow(hit.seq);
+  setTimeout(() => document.querySelector(`[data-item="${hit.id}"]`)
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+}
+
+// 이 번호를 가리키는 것들. 노드 설명의 [[…]] 와 행의 md 값·relation 배열을 훑는다.
+// ponytail: 프로젝트 전체가 이미 메모리에 있어 클라이언트에서 센다. 데이터가 커지면 서버로 옮긴다
+function backrefs(seq) {
+  if (seq == null) return [];
+  const re = new RegExp(`\\[\\[[A-Za-z][A-Za-z0-9]*-${seq}\\]\\]`);
+  const out = [];
+  for (const n of nodes)
+    if (re.test(n.description || '')) out.push({ kind: 'node', seq: n.seq, id: n.id, title: n.title });
+  for (const [cid, arr] of collItems) {
+    const k = collById(cid);
+    for (const it of arr) {
+      const props = it.props || {};
+      const hit = (k.schema || []).some(c =>
+        (c.type === 'md' && re.test(props[c.key] || '')) ||
+        (c.type === 'relation' && (props[c.key] || []).includes(seq)));
+      if (hit) out.push({ kind: 'item', seq: it.seq, id: it.id, cid, title: itemTitle(it, k) });
+    }
+  }
+  return out;
+}
+function backrefsHTML(seq, label = '가리키는 항목') {
+  const list = backrefs(seq);
+  if (!list.length) return '';
+  return `<div class="backrefs"><span class="lbl">${label} ${list.length}</span>${list.map(r => refChip(r.seq)).join('')}</div>`;
+}
+
 function findItem(iid) {
   for (const arr of collItems.values()) { const it = arr.find(x => x.id === iid); if (it) return it; }
   return null;
@@ -2583,54 +2760,328 @@ function renderCollections(c) {
   const list = prdColls();
   c.innerHTML = `<div class="coll-wrap">
     <nav class="coll-toc">${list.map(k => `<a href="#coll-${k.id}" onclick="scrollToColl(${k.id});return false">
-        <span>${esc(k.title)}</span><small>${(collItems.get(k.id) || []).length}</small></a>`).join('')}</nav>
+        <span>${esc(k.title)}</span><small>${(collItems.get(k.id) || []).length}</small></a>`).join('')}
+      ${canEdit() ? `<a href="#" onclick="openAddColl();return false" style="color:#2f62c4;margin-top:6px">+ 표 추가</a>` : ''}</nav>
     <div class="coll-main">${list.map(collectionHTML).join('') || '<p class="hint">표가 없습니다.</p>'}</div></div>`;
 }
-// 작업 탭: builtin `tasks` 컬렉션 하나. board 보기(칸반)는 2단계 2.5 에서, 지금은 표로 (PLAN D8·D10)
+// 작업 탭: builtin `tasks` 컬렉션 하나. view='board' 면 칸반으로 그려진다 (PLAN D8·D10)
 function renderTasks(c) {
   const k = colls.find(x => x.key === 'tasks');
   if (!k) {
     c.innerHTML = '<p class="hint" style="max-width:900px;margin:20px auto">작업 표가 없습니다. 서버를 다시 기동하면 기본 표가 만들어집니다.</p>';
     return;
   }
-  c.innerHTML = `<div class="coll-wrap" style="max-width:1100px"><div class="coll-main">${collectionHTML(k)}
-    <p class="hint" style="margin:0">상태별 칸반 보기와 상위 작업 연결은 2단계에서 붙습니다. 지금은 표로 추가·수정·정렬합니다.</p>
-  </div></div>`;
+  c.innerHTML = `<div class="coll-wrap" style="max-width:1100px"><div class="coll-main">${collectionHTML(k)}</div></div>`;
 }
 function scrollToColl(id) {
   document.getElementById('coll-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+// ---------- 표 설정: 이름 · 보기 · 속성 (PLAN 3.1) ----------
+const TYPE_LABEL = { text: '한 줄 글', md: '마크다운', select: '선택', checkbox: '체크', relation: '관련' };
+const VIEW_LABEL = { document: '문서', table: '표', board: '칸반' };
+let collEdit = null;      // { cid, title, view, board_by, schema: [...] }
+
+function openCollSettings(cid) {
+  if (!needEdit()) return;
+  const k = collById(cid); if (!k) return;
+  collEdit = {
+    cid, title: k.title, view: k.view, board_by: k.board_by,
+    schema: JSON.parse(JSON.stringify(k.schema || [])),
+  };
+  showModal(collSettingsHTML);
+}
+// 라벨에서 속성 key 를 만든다. 영문·숫자면 그대로, 아니면 p2·p3…
+function keyFromLabel(label, taken) {
+  let base = (label || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '');
+  if (!/^[a-z]/.test(base)) base = '';
+  let key = base || 'p';
+  let i = 1;
+  while (!key || taken.includes(key)) key = (base || 'p') + (++i);
+  return key.slice(0, 30);
+}
+function collEditSet(i, field, value) {
+  const p = collEdit.schema[i];
+  if (field === 'options') p.options = value.split(',').map(x => x.trim()).filter(Boolean);
+  else if (field === 'type') {
+    p.type = value;
+    if (value === 'select' && !(p.options || []).length) p.options = ['옵션1', '옵션2'];
+    if (value !== 'select') delete p.options;
+    if (value !== 'relation') delete p.target;
+  } else p[field] = value;
+  paintModal();
+}
+function collEditAdd() {
+  const taken = collEdit.schema.map(x => x.key);
+  collEdit.schema.push({ key: keyFromLabel('', taken), label: '새 속성', type: 'text' });
+  paintModal();
+}
+function collEditDel(i) { collEdit.schema.splice(i, 1); paintModal(); }
+function collEditMove(i, d) {
+  const j = i + d;
+  if (j < 0 || j >= collEdit.schema.length) return;
+  [collEdit.schema[i], collEdit.schema[j]] = [collEdit.schema[j], collEdit.schema[i]];
+  paintModal();
+}
+function collSettingsHTML() {
+  const k = collById(collEdit.cid);
+  const rows = (collItems.get(collEdit.cid) || []).length;
+  const selects = collEdit.schema.filter(p => p.type === 'select');
+  return `<h3 style="margin-bottom:6px">표 설정</h3>
+    <p class="hint" style="margin:0 0 14px">속성을 지우면 <b>모든 행의 그 값도 사라집니다</b>.
+      속성 key 는 한 번 만들면 바뀌지 않습니다(이름만 바뀝니다).</p>
+
+    <div style="display:grid;grid-template-columns:1fr 120px 1fr;gap:8px;margin-bottom:14px">
+      <label style="font-size:12px;color:#888">이름
+        <input type="text" value="${esc(collEdit.title)}" oninput="collEdit.title=this.value"
+          style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font-family:inherit"></label>
+      <label style="font-size:12px;color:#888">보기
+        <select onchange="collEdit.view=this.value;paintModal()"
+          style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font-family:inherit">
+          ${Object.entries(VIEW_LABEL).map(([v, l]) =>
+            `<option value="${v}" ${v === collEdit.view ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label style="font-size:12px;color:#888">칸반 열 기준
+        <select onchange="collEdit.board_by=this.value||null"
+          style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font-family:inherit">
+          <option value="">(없음)</option>
+          ${selects.map(p => `<option value="${esc(p.key)}" ${p.key === collEdit.board_by ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
+    </div>
+    ${collEdit.view === 'board' && !selects.length
+      ? '<p class="hint" style="color:#a4534b;margin:0 0 10px">칸반으로 보려면 선택(select) 속성이 하나 있어야 합니다.</p>' : ''}
+
+    <b style="font-size:13px">속성 ${collEdit.schema.length}</b>
+    <div style="margin:6px 0 10px">${collEdit.schema.map((p, i) => `<div class="prow">
+        <div><input type="text" value="${esc(p.label)}" oninput="collEdit.schema[${i}].label=this.value"
+            style="width:100%"><div class="keyhint">${esc(p.key)}</div></div>
+        <select onchange="collEditSet(${i},'type',this.value)">
+          ${Object.entries(TYPE_LABEL).map(([t, l]) =>
+            `<option value="${t}" ${t === p.type ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <div>${p.type === 'select'
+          ? `<input type="text" value="${esc((p.options || []).join(', '))}" placeholder="옵션을 쉼표로"
+              onchange="collEditSet(${i},'options',this.value)" style="width:100%">`
+          : p.type === 'relation'
+          ? `<select onchange="collEditSet(${i},'target',this.value||undefined)" style="width:100%">
+              <option value="">아무 표·기능</option>
+              ${colls.map(c => `<option value="${esc(c.key)}" ${c.key === p.target ? 'selected' : ''}>${esc(c.title)} 만</option>`).join('')}</select>`
+          : '<span class="hint" style="margin:0">—</span>'}</div>
+        <div style="white-space:nowrap">
+          <button class="mv" onclick="collEditMove(${i},-1)" ${i === 0 ? 'disabled' : ''}>▲</button>
+          <button class="mv" onclick="collEditMove(${i},1)" ${i === collEdit.schema.length - 1 ? 'disabled' : ''}>▼</button>
+          <button class="mv danger" title="속성 삭제 (모든 행의 값이 사라집니다)" onclick="collEditDel(${i})">✕</button>
+        </div></div>`).join('')}</div>
+    <button class="btn" onclick="collEditAdd()">+ 속성 추가</button>
+
+    <div class="btnrow" style="margin-top:18px">
+      <button class="btn primary" onclick="saveCollSettings()">저장</button>
+      ${k.key !== 'prd' && k.key !== 'tasks'
+        ? `<button class="btn danger" title="행 ${rows}개가 함께 사라집니다"
+            onclick="twoStep('cdel:${k.id}', () => removeCollection(${k.id}))">${askLabel('cdel:' + k.id, '표 삭제 (행 ' + rows + ')')}</button>`
+        : '<span class="hint" style="margin:0">기본 표는 지울 수 없습니다</span>'}
+      <button class="btn" onclick="closeModal()">닫기</button></div>`;
+}
+async function saveCollSettings() {
+  const e = collEdit;
+  try {
+    await api(`/api/collections/${e.cid}`, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: e.title, view: e.view, board_by: e.board_by, schema: e.schema }) });
+    await loadCollections();
+    closeModal(); render();
+    toast('표 설정을 저장했습니다.');
+  } catch (err) { toast(err.detail || '저장 실패'); }
+}
+async function removeCollection(cid) {
+  try {
+    await api(`/api/collections/${cid}`, { method: 'DELETE' });
+    await loadCollections();
+    closeModal(); render();
+    toast('표를 지웠습니다.');
+  } catch (err) { toast(err.detail || '삭제 실패'); }
+}
+
+// ---------- 표 추가 (PLAN 3.2) ----------
+const COLL_TEMPLATES = [
+  ['policies', '핵심 정책', '지켜야 할 규칙. 기능에서 [[번호]] 로 가리킵니다'],
+  ['nfr', '비기능 요구사항', '성능·보안·일관성 같은 제약'],
+  ['decisions', '미결정 사항', '미결정 / 결정 칸반'],
+  ['tests', '테스트 시나리오', '시나리오 · 기대 결과 · 관련 기능'],
+  ['actors', '객체(액터)', '시스템에 등장하는 주체와 역할'],
+  ['flows', '전체 흐름', '액팅 · 시나리오'],
+  ['target_users', '타겟 사용자', '사용자 · 목적'],
+  ['devices', '접근 기기', '단순 목록'],
+  ['domains', '도메인', '단순 목록'],
+];
+function openAddColl() {
+  if (!needEdit()) return;
+  showModal(addCollHTML);
+}
+function addCollHTML() {
+  const have = colls.map(c => c.key);
+  return `<h3 style="margin-bottom:6px">표 추가</h3>
+    <p class="hint" style="margin:0 0 14px">프로젝트마다 필요한 표만 두면 됩니다. 나중에 속성을 바꾸거나 지울 수 있습니다.</p>
+    ${COLL_TEMPLATES.map(([key, title, desc]) => {
+      const on = have.includes(key);
+      return `<div class="tplrow ${on ? 'on' : ''}">
+        <div class="nm"><b>${esc(title)}</b><div class="hint" style="margin:0">${esc(desc)}</div></div>
+        ${on ? '<span class="hint" style="margin:0">이미 있음</span>'
+             : `<button class="btn" onclick="addColl('${key}')">추가</button>`}</div>`;
+    }).join('')}
+    <div class="tplrow">
+      <div class="nm"><b>빈 표</b><div class="hint" style="margin:0">이름만 정하고 속성은 직접 만듭니다</div></div>
+      <input type="text" id="newcoll" placeholder="표 이름" style="padding:7px;border:1px solid #ddd;border-radius:6px;font-family:inherit"
+        onkeydown="if(event.key==='Enter')addBlankColl()">
+      <button class="btn" onclick="addBlankColl()">만들기</button></div>
+    <div class="btnrow" style="margin-top:16px"><button class="btn" onclick="closeModal()">닫기</button></div>`;
+}
+async function addColl(key) {
+  try {
+    const c = await api(`/api/projects/${project.slug}/collections`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+    await loadCollections();
+    closeModal(); tab = 'prd'; render();
+    scrollToColl(c.id);
+    toast(`'${c.title}' 표를 추가했습니다.`);
+  } catch (e) { toast(e.detail || '표 추가 실패'); }
+}
+async function addBlankColl() {
+  const title = (document.getElementById('newcoll').value || '').trim();
+  if (!title) return toast('표 이름을 입력하세요.');
+  const key = keyFromLabel(title, colls.map(c => c.key)) || ('t' + Date.now().toString(36));
+  try {
+    const c = await api(`/api/projects/${project.slug}/collections`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, title, view: 'table', schema: [{ key: 'title', label: '제목', type: 'text' }] }) });
+    await loadCollections();
+    closeModal(); tab = 'prd'; render();
+    openCollSettings(c.id);           // 바로 속성을 정하도록
+  } catch (e) { toast(e.detail || '표 추가 실패'); }
+}
+
 function collectionHTML(k) {
   const items = collItems.get(k.id) || [];
   return `<section class="coll-card" id="coll-${k.id}">
     <header class="coll-head"><h2>${esc(k.title)}</h2><span class="hint" style="margin:0">${items.length}개</span>
+      ${k.view !== 'document' ? `<button class="btn" onclick="toggleTrace(${k.id})">${traceOn.has(k.id) ? '표로 보기' : '추적표'}</button>` : ''}
+      ${canEdit() ? `<button class="btn" title="표 설정 · 속성 편집" onclick="openCollSettings(${k.id})">설정</button>` : ''}
       ${canEdit() ? `<button class="btn" onclick="addItem(${k.id})">${k.view === 'document' ? '+ 섹션 추가' : '+ 행 추가'}</button>` : ''}
     </header>
-    ${k.view === 'document' ? documentHTML(items) : tableHTML(k, items)}</section>`;
+    ${k.view === 'document' ? documentHTML(items)
+      : traceOn.has(k.id) ? traceHTML(k, items)
+      : k.view === 'board' ? boardHTML(k, items) : tableHTML(k, items)}</section>`;
+}
+// 이 행을 가리키는 것이 있으면 번호 아래에 "참조 N" — 누르면 목록
+const refBadge = seq => {
+  const n = backrefs(seq).length;
+  return n ? `<div class="refbadge" onclick="showBackrefs(${seq})">참조 ${n}</div>` : '';
+};
+function showBackrefs(seq) {
+  const list = backrefs(seq);
+  showModal(() => `<h3 style="margin-bottom:6px">${esc(seqLabel(seq))} 를 가리키는 항목 ${list.length}</h3>
+    <p class="hint" style="margin:0 0 12px">본문의 <code>[[번호]]</code> 와 관련(relation) 값을 훑은 결과입니다.</p>
+    <div class="backrefs">${list.map(r => refChip(r.seq)).join('') || '<span class="hint" style="margin:0">없습니다.</span>'}</div>
+    <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="closeModal()">닫기</button></div>`);
 }
 const rowTools = (it, i, n) => canEdit() ? `
+  <button class="mv" title="상세 · 이력 · 코멘트" onclick="openItem(${it.id})">⋯</button>
   <button class="mv" title="위로" onclick="moveItem(${it.id},-1)" ${i === 0 ? 'disabled' : ''}>▲</button>
   <button class="mv" title="아래로" onclick="moveItem(${it.id},1)" ${i === n - 1 ? 'disabled' : ''}>▼</button>
-  <button class="mv danger" title="삭제" onclick="twoStep('item:${it.id}', () => deleteItem(${it.id}))">${askLabel('item:' + it.id, '✕')}</button>` : '';
+  <button class="mv danger" title="${backrefs(it.seq).length ? `이 행을 가리키는 항목이 ${backrefs(it.seq).length}개 있습니다` : '삭제'}"
+    onclick="twoStep('item:${it.id}', () => deleteItem(${it.id}))">${askLabel('item:' + it.id, backrefs(it.seq).length ? '✕' + backrefs(it.seq).length : '✕')}</button>` : '';
 
 function documentHTML(items) {
   if (!items.length) return '<p class="hint" style="padding:8px 0">섹션이 없습니다.</p>';
   return items.map((it, i) => {
     const p = it.props || {}, body = p.body || '';
-    return `<article class="prd-doc coll-sec" data-item="${it.id}">
+    return `<article class="prd-doc coll-sec${flashCls(it.seq)}" data-item="${it.id}">
       <div class="sec-head">
         <h1 class="sec-title" ondblclick="editItemProp(event,this,${it.id},'title')" title="더블클릭하여 제목 수정">${esc(p.title || '(제목 없음)')}</h1>
         <span class="sec-tools">${seqChip(it.seq)}${rowTools(it, i, items.length)}</span>
       </div>
       <div class="sec-body md-cell" ondblclick="editItemProp(event,this,${it.id},'body')" title="더블클릭하여 수정">${body.trim() ? md(body) : '<span class="hint">더블클릭하여 작성</span>'}</div>
+      ${backrefsHTML(it.seq)}
     </article>`;
   }).join('');
 }
+// 추적표: 행마다 "누가 나를 가리키나". 저장하지 않고 그때그때 계산한다 (PLAN 2.4)
+const traceOn = new Set();
+function toggleTrace(cid) { traceOn.has(cid) ? traceOn.delete(cid) : traceOn.add(cid); render(); }
+function traceHTML(k, items) {
+  if (!items.length) return '<p class="hint" style="padding:8px 0">행이 없습니다.</p>';
+  const rows = items.map(it => {
+    const list = backrefs(it.seq);
+    return `<tr class="${flashCls(it.seq).trim()}" data-item="${it.id}">
+      <td class="c-seq">${seqChip(it.seq)}</td>
+      <td style="max-width:320px">${esc(itemTitle(it, k))}</td>
+      <td>${list.length ? list.map(r => refChip(r.seq)).join(' ') : '<span class="hint">가리키는 항목 없음</span>'}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="coll-scroll"><table class="coll-table trace">
+    <thead><tr><th class="c-seq">번호</th><th>내용</th><th>가리키는 항목</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+// 칸반: board_by 로 지정된 select 속성의 옵션이 열이 된다 (PLAN 2.5)
+function boardHTML(k, items) {
+  const by = (k.schema || []).find(c => c.key === k.board_by && c.type === 'select');
+  if (!by) return tableHTML(k, items);
+  const cols = [...by.options, null];              // 마지막은 값이 비어 있는 카드
+  return `<div class="board">${cols.map(opt => {
+    const sub = items.filter(it => (((it.props || {})[by.key]) || null) === opt);
+    if (opt === null && !sub.length) return '';
+    return `<div class="bcol" data-opt="${opt === null ? '' : esc(opt)}"
+        ondragover="boardOver(event,this)" ondragleave="this.classList.remove('over')"
+        ondrop="boardDrop(event,this,${k.id},'${by.key}')">
+      <h4><span>${esc(opt ?? '미지정')}</span><span>${sub.length}</span></h4>
+      ${sub.map(it => cardHTML(it, k)).join('')}
+      ${canEdit() && opt !== null ? `<button class="btn" style="width:100%;padding:6px;font-size:12px"
+        onclick="addItem(${k.id}, {'${by.key}': this.closest('.bcol').dataset.opt})">+ 추가</button>` : ''}
+    </div>`;
+  }).join('')}</div>`;
+}
+// 에픽 카드에는 하위(parent 가 나를 가리키는 행) 완료 수를 보여 준다
+function childProgress(k, it) {
+  const par = (k.schema || []).find(c => c.type === 'relation' && c.target === k.key);
+  const st = (k.schema || []).find(c => c.key === k.board_by && c.type === 'select');
+  if (!par || !st) return '';
+  const kids = (collItems.get(k.id) || []).filter(x => ((x.props || {})[par.key] || []).includes(it.seq));
+  if (!kids.length) return '';
+  const done = kids.filter(x => (x.props || {})[st.key] === st.options[st.options.length - 1]).length;
+  return `<span class="prog">하위 ${done}/${kids.length}</span>`;
+}
+function cardHTML(it, k) {
+  const p = it.props || {}, kind = p.kind;
+  return `<div class="bcard${flashCls(it.seq)}" data-item="${it.id}" ${canEdit() ? `draggable="true"
+      ondragstart="boardDragStart(event,${it.id})" ondragend="this.classList.remove('dragging')"` : ''}
+      onclick="openItem(${it.id})">
+    <div class="top">${seqChip(it.seq)}${kind ? `<span class="kind">${esc(kind)}</span>` : ''}</div>
+    <div class="ttl">${esc(itemTitle(it, k)) || '<span class="hint">(제목 없음)</span>'}</div>
+    <div class="foot">${childProgress(k, it)}${refBadge(it.seq)}</div>
+  </div>`;
+}
+let boardDrag = null;
+function boardDragStart(e, iid) {
+  boardDrag = iid;
+  e.currentTarget.classList.add('dragging');
+  try { e.dataTransfer.setData('text/plain', String(iid)); } catch (_) {}
+  e.dataTransfer.effectAllowed = 'move';
+}
+function boardOver(e, el) {
+  if (boardDrag == null) return;
+  e.preventDefault(); el.classList.add('over');
+}
+async function boardDrop(e, el, cid, key) {
+  e.preventDefault(); el.classList.remove('over');
+  const iid = boardDrag; boardDrag = null;
+  if (iid == null) return;
+  const value = el.dataset.opt || null;
+  const it = findItem(iid);
+  if (!it || ((it.props || {})[key] || null) === value) return render();
+  await setItemProp(iid, key, value);
+}
+
 function tableHTML(k, items) {
   const cols = k.schema || [];
   const head = `<tr><th class="c-seq">번호</th>${cols.map(p => `<th>${esc(p.label)}</th>`).join('')}${canEdit() ? '<th class="c-act"></th>' : ''}</tr>`;
-  const rows = items.map((it, i) => `<tr data-item="${it.id}">
-      <td class="c-seq">${seqChip(it.seq)}</td>
+  const rows = items.map((it, i) => `<tr class="${flashCls(it.seq).trim()}" data-item="${it.id}">
+      <td class="c-seq">${seqChip(it.seq)}${refBadge(it.seq)}</td>
       ${cols.map(p => `<td class="c-${p.type}">${cellHTML(it, p)}</td>`).join('')}
       ${canEdit() ? `<td class="c-act">${rowTools(it, i, items.length)}</td>` : ''}
     </tr>`).join('');
@@ -2650,7 +3101,8 @@ function cellHTML(it, p) {
     case 'md':
       return `<div class="md-cell" ondblclick="editItemProp(event,this,${it.id},'${p.key}')" title="더블클릭하여 수정">${(v || '').trim() ? md(v) : '<span class="hint">—</span>'}</div>`;
     case 'relation':
-      return `<div class="rel-cell" ondblclick="editItemProp(event,this,${it.id},'${p.key}')" title="더블클릭하여 번호를 쉼표로 입력 (예: 14, 37)">${(v || []).map(seqChip).join(' ') || '<span class="hint">—</span>'}</div>`;
+      return `<div class="rel-cell">${(v || []).map(refChip).join(' ') || '<span class="hint">—</span>'}
+        ${canEdit() ? `<button class="mv" title="연결 편집" onclick="openRelPicker(${it.id},'${p.key}')">＋</button>` : ''}</div>`;
     default:
       return `<div class="text-cell" ondblclick="editItemProp(event,this,${it.id},'${p.key}')" title="더블클릭하여 수정">${v ? esc(String(v)) : '<span class="hint">—</span>'}</div>`;
   }
@@ -2701,6 +3153,83 @@ function editItemProp(e, el, iid, key) {
     else if (ev.key === 'Enter' && (!multiline || ev.ctrlKey)) { ev.preventDefault(); finish(true); }
   });
 }
+// ---------- relation 편집기 (PLAN 2.2) ----------
+// 칩 목록에서 ✕ 로 빼고, "+ 연결" 로 검색해 넣는다. 값은 번호(seq) 배열
+let relPick = { iid: null, key: null, q: '' };
+
+async function relRemove(iid, key, seq) {
+  const it = findItem(iid); if (!it) return;
+  await setItemProp(iid, key, ((it.props || {})[key] || []).filter(x => x !== seq));
+  if (relPick.iid === iid) paintModal();
+}
+function openRelPicker(iid, key) {
+  if (!needEdit()) return;
+  relPick = { iid, key, q: '' };
+  showModal(relPickerHTML);
+}
+function relPickQuery(v) {
+  relPick.q = v;
+  const box = document.getElementById('rel-list');
+  if (box) box.innerHTML = relCandidatesHTML();
+}
+// 후보: 모든 노드 + 모든 행. target 이 지정된 속성이면 그 표만
+function relCandidates() {
+  const it = findItem(relPick.iid);
+  const coll = it && collById(it._cid);
+  const prop = (coll && coll.schema || []).find(x => x.key === relPick.key) || {};
+  const q = relPick.q.trim().toLowerCase();
+  const match = c => !q || String(c.seq).includes(q) || (c.title || '').toLowerCase().includes(q)
+    || seqLabel(c.seq).toLowerCase().includes(q);
+  let out = [];
+  if (!prop.target)
+    out = nodes.filter(n => n.seq != null).map(n => ({ kind: 'node', seq: n.seq, title: n.title, group: '기능명세서' }));
+  for (const [cid, arr] of collItems) {
+    const k = collById(cid);
+    if (prop.target && k.key !== prop.target) continue;
+    out = out.concat(arr.map(x => ({ kind: 'item', seq: x.seq, title: itemTitle(x, k), group: k.title })));
+  }
+  return out.filter(match).slice(0, 60);
+}
+function relCandidatesHTML() {
+  const it = findItem(relPick.iid);
+  const cur = ((it || {}).props || {})[relPick.key] || [];
+  const list = relCandidates();
+  if (!list.length) return '<p style="color:#aaa;padding:12px 0">찾는 항목이 없습니다.</p>';
+  return list.map(c => {
+    const on = cur.includes(c.seq);
+    return `<div class="pickrow ${on ? 'on' : ''}" ${on ? '' : `onclick="relAdd(${c.seq})"`}>
+      <b style="font-family:ui-monospace,monospace;font-size:12px;color:#888">${esc(seqLabel(c.seq))}</b>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(c.title || '(제목 없음)')}</span>
+      <span class="hint" style="margin:0">${esc(c.group)}</span>
+      ${on ? '<span class="hint" style="margin:0">연결됨</span>' : ''}</div>`;
+  }).join('');
+}
+async function relAdd(seq) {
+  const it = findItem(relPick.iid); if (!it) return;
+  const cur = (it.props || {})[relPick.key] || [];
+  if (cur.includes(seq)) return;
+  await setItemProp(relPick.iid, relPick.key, [...cur, seq]);
+  paintModal();
+}
+function relPickerHTML() {
+  const it = findItem(relPick.iid);
+  const coll = it && collById(it._cid);
+  const prop = (coll && coll.schema || []).find(x => x.key === relPick.key) || { label: '관련' };
+  const cur = ((it || {}).props || {})[relPick.key] || [];
+  return `<h3 style="margin-bottom:6px">${esc(prop.label)} 연결</h3>
+    <p class="hint" style="margin:0 0 12px">${prop.target ? `<b>${esc((colls.find(c => c.key === prop.target) || {}).title || prop.target)}</b> 표의 행만 연결할 수 있습니다.` : '기능과 표의 행을 모두 연결할 수 있습니다.'}</p>
+    <div class="backrefs" style="margin:0 0 12px">${cur.length
+      ? cur.map(seq => `<span class="refchip ${(seqInfo(seq) || {}).kind === 'node' ? 'node' : 'item'}">
+          <b>${esc(seqLabel(seq))}</b><span class="rt">${esc((seqInfo(seq) || {}).title || '')}</span>
+          <span class="x" title="연결 해제" onclick="relRemove(${relPick.iid},'${relPick.key}',${seq})">✕</span></span>`).join('')
+      : '<span class="hint" style="margin:0">아직 연결된 항목이 없습니다.</span>'}</div>
+    <input type="text" placeholder="번호나 제목으로 검색…" value="${esc(relPick.q)}"
+      style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;margin-bottom:8px"
+      oninput="relPickQuery(this.value)">
+    <div id="rel-list" style="max-height:44vh;overflow:auto">${relCandidatesHTML()}</div>
+    <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="closeModal()">닫기</button></div>`;
+}
+
 async function setItemProp(iid, key, value) {
   if (!needEdit()) return;
   const it = findItem(iid); if (!it) return;
@@ -2708,13 +3237,15 @@ async function setItemProp(iid, key, value) {
     await api(`/api/items/${iid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ props: { [key]: value } }) });
     await reloadItems(it._cid);
+    if (itemView.iid === iid) itemView.events = await api(`/api/items/${iid}/events`).catch(() => []);
     render();
+    if (!document.getElementById('modal').hidden) paintModal();
   } catch (err) { toast(err.detail || '저장 실패'); render(); }
 }
-async function addItem(cid) {
+async function addItem(cid, preset) {
   if (!needEdit()) return;
   const coll = collById(cid); if (!coll) return;
-  const props = coll.view === 'document' ? { title: '새 섹션', body: '' } : {};
+  const props = { ...(coll.view === 'document' ? { title: '새 섹션', body: '' } : {}), ...(preset || {}) };
   try {
     const it = await api(`/api/collections/${cid}/items`, { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ props }) });
@@ -2722,11 +3253,95 @@ async function addItem(cid) {
     // 만들자마자 제목(또는 첫 글 칸)을 편집 상태로
     const firstKey = coll.view === 'document' ? 'title'
       : ((coll.schema || []).find(x => x.type === 'text' || x.type === 'md') || {}).key;
+    if (coll.view === 'board') { openItem(it.id); return; }
     const el = document.querySelector(`[data-item="${it.id}"] ${coll.view === 'document' ? '.sec-title' : '.text-cell, .md-cell'}`);
     if (el && firstKey) editItemProp(null, el, it.id, firstKey);
     scrollToColl(cid);
   } catch (err) { toast(err.detail || '추가 실패'); }
 }
+// ---------- 행 상세 모달: 속성 · 이력 · 코멘트 (PLAN 2.5·2.6·2.7) ----------
+let itemView = { iid: null, events: [], comments: [], tab: 'detail' };
+
+async function openItem(iid) {
+  const it = findItem(iid); if (!it) return;
+  itemView = { iid, events: [], comments: [], tab: 'detail' };
+  showModal(itemHTML);
+  [itemView.events, itemView.comments] = await Promise.all([
+    api(`/api/items/${iid}/events`).catch(() => []),
+    api(`/api/items/${iid}/comments`).catch(() => []),
+  ]);
+  paintModal();
+}
+function setItemTab(t) { itemView.tab = t; paintModal(); }
+const propValueHTML = (it, c) => {
+  const v = (it.props || {})[c.key];
+  switch (c.type) {
+    case 'select': return v ? `<span class="pill">${esc(v)}</span>` : '<span class="hint">—</span>';
+    case 'checkbox': return v ? '✓' : '<span class="hint">—</span>';
+    case 'md': return (v || '').trim() ? md(v) : '<span class="hint">—</span>';
+    case 'relation': return (v || []).map(refChip).join(' ') || '<span class="hint">—</span>';
+    default: return v ? esc(String(v)) : '<span class="hint">—</span>';
+  }
+};
+const evValue = v => v == null || v === '' ? '(비움)'
+  : Array.isArray(v) ? v.map(x => seqLabel(x)).join(', ')
+  : typeof v === 'boolean' ? (v ? '✓' : '✗')
+  : String(v).length > 40 ? String(v).slice(0, 40) + '…' : String(v);
+
+function itemHTML() {
+  const it = findItem(itemView.iid);
+  if (!it) return '<p>행을 찾을 수 없습니다.</p>';
+  const k = collById(it._cid);
+  const cols = (k.schema || []);
+  const t = itemView.tab;
+  const body = t === 'events'
+    ? (itemView.events.length ? itemView.events.map(e => `<div class="ev">
+          <span class="when">${new Date(e.at).toLocaleString()}</span>
+          <span style="flex:1">${esc(e.username || '(탈퇴)')} · <b>${esc((cols.find(c => c.key === e.prop) || {}).label || e.prop)}</b>
+            ${esc(evValue(e.before))} → ${esc(evValue(e.after))}</span></div>`).join('')
+        : '<p class="hint" style="padding:10px 0">아직 바뀐 기록이 없습니다.</p>')
+    : t === 'comments'
+    ? `<div style="margin-bottom:8px">${itemView.comments.length
+          ? commentsHTML(itemView.comments, null) : '<p class="hint" style="padding:10px 0">코멘트가 없습니다.</p>'}</div>
+       ${auth ? `<div style="display:flex;gap:6px">
+         <input type="text" id="icmt-in" placeholder="코멘트를 입력하세요..."
+           style="flex:1;padding:8px;border:1px solid #ddd;border-radius:6px"
+           onkeydown="if(event.key==='Enter')addItemComment()">
+         <button class="btn primary" onclick="addItemComment()">등록</button></div>`
+        : '<p class="hint">코멘트를 작성하려면 로그인하세요.</p>'}`
+    : `<dl class="idet" style="margin:0">${cols.map(c => `<dt>${esc(c.label)}</dt>
+        <dd ${c.type === 'relation'
+            ? ''
+            : `ondblclick="editItemProp(event,this,${it.id},'${c.key}')" title="더블클릭하여 수정" style="cursor:text"`}>
+          ${propValueHTML(it, c)}
+          ${c.type === 'relation' && canEdit() ? `<button class="mv" title="연결 편집" onclick="openRelPicker(${it.id},'${c.key}')">＋</button>` : ''}
+        </dd>`).join('')}</dl>
+       ${backrefsHTML(it.seq)}`;
+
+  const tabBtn = (id, label, n) => `<button class="btn ${t === id ? 'primary' : ''}"
+    style="padding:4px 12px;font-size:12px" onclick="setItemTab('${id}')">${label}${n ? ` ${n}` : ''}</button>`;
+  return `<h3 style="margin-bottom:4px;display:flex;align-items:center;gap:8px">
+      ${seqChip(it.seq)}<span>${esc(itemTitle(it, k)) || '(제목 없음)'}</span></h3>
+    <p class="hint" style="margin:0 0 12px">${esc(k.title)}</p>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      ${tabBtn('detail', '내용')}${tabBtn('events', '이력', itemView.events.length)}${tabBtn('comments', '코멘트', itemView.comments.length)}</div>
+    ${body}
+    <div class="btnrow" style="margin-top:16px">
+      ${canEdit() ? `<button class="btn danger" onclick="twoStep('idel:${it.id}', () => { closeModal(); deleteItem(${it.id}); })">${askLabel('idel:' + it.id, '삭제')}</button>` : ''}
+      <button class="btn" onclick="closeModal()">닫기</button></div>`;
+}
+async function addItemComment() {
+  const box = document.getElementById('icmt-in');
+  const text = (box.value || '').trim();
+  if (!text) return;
+  try {
+    await api(`/api/items/${itemView.iid}/comments`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }) });
+    itemView.comments = await api(`/api/items/${itemView.iid}/comments`).catch(() => []);
+    paintModal();
+  } catch (e) { toast(e.detail || '코멘트 등록 실패'); }
+}
+
 async function deleteItem(iid) {
   if (!needEdit()) return;
   const it = findItem(iid); if (!it) return;
@@ -2814,6 +3429,7 @@ async function boot() {
       project = await api('/api/shared/' + shareToken);
       await openProjectData();
       readViewParams();
+      queueMicrotask(applyPendingSeq);
     } catch (e) {
       // 링크가 만료·해제된 경우: 일반 화면으로 떨어뜨려 홈 버튼 등이 계속 동작하게 한다
       shareToken = null; invalidShare = true; project = null;
@@ -2825,6 +3441,7 @@ async function boot() {
     await applyRoute();
   }
   render();
+  applyPendingSeq();
 }
 const reloadNodes = () => api(`/api/projects/${project.slug}/nodes`);
 async function addNode(parentId) {
