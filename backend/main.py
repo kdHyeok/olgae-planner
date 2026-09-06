@@ -317,6 +317,17 @@ def init_db():
             CREATE INDEX IF NOT EXISTS collections_project_id_idx ON collections (project_id);
             -- 버전 스냅샷에 컬렉션·행도 담는다. data(노드)·prd 는 그대로 (1.8)
             ALTER TABLE versions ADD COLUMN IF NOT EXISTS collections jsonb;
+            -- 행의 속성이 언제 누구에 의해 바뀌었는지 (PLAN 2.6)
+            CREATE TABLE IF NOT EXISTS item_events (
+                id serial PRIMARY KEY,
+                item_id int NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                user_id int REFERENCES users(id) ON DELETE SET NULL,
+                at timestamptz NOT NULL DEFAULT now(),
+                prop text NOT NULL,
+                before jsonb,
+                after jsonb
+            );
+            CREATE INDEX IF NOT EXISTS item_events_item_id_idx ON item_events (item_id, at DESC);
 
             -- 코멘트는 노드 또는 컬렉션 행 중 하나에 달린다 (API·UI 는 2단계 2.7)
             ALTER TABLE comments ALTER COLUMN node_id DROP NOT NULL;
@@ -1615,9 +1626,20 @@ def update_item(iid: int, body: dict, user: dict = Depends(current_user)):
         patch = validate_props(c["schema"], body.get("props", body))
         if not patch:
             raise HTTPException(400, "바꿀 속성이 없습니다")
-        props = {**(item["props"] or {}), **patch}
+        old = item["props"] or {}
+        props = {**old, **patch}
         cur.execute("UPDATE items SET props = %s, updated_at = now() WHERE id = %s",
                     (json.dumps(props, ensure_ascii=False), iid))
+        # 실제로 값이 달라진 속성만 이력으로 남긴다 (PLAN 2.6)
+        for key, after in patch.items():
+            before = old.get(key)
+            if before == after:
+                continue
+            cur.execute("""INSERT INTO item_events (item_id, user_id, prop, before, after)
+                           VALUES (%s, %s, %s, %s, %s)""",
+                        (iid, user["id"], key,
+                         json.dumps(before, ensure_ascii=False),
+                         json.dumps(after, ensure_ascii=False)))
         item, _ = load_item(cur, iid)
         return public_item(item)
 
@@ -1628,6 +1650,18 @@ def delete_item(iid: int, user: dict = Depends(current_user)):
         item, c = load_item(cur, iid)
         check_write(cur, c["project_id"], user)
         cur.execute("DELETE FROM items WHERE id = %s", (iid,))
+
+
+@app.get("/api/items/{iid}/events")
+def list_item_events(iid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+    """행의 변경 이력. 최근 것부터 100개."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        item, c = load_item(cur, iid)
+        check_access(cur, c["project_id"], user, share)
+        cur.execute("""SELECT e.id, e.prop, e.before, e.after, e.at, u.display_name AS username
+                       FROM item_events e LEFT JOIN users u ON u.id = e.user_id
+                       WHERE e.item_id = %s ORDER BY e.at DESC, e.id DESC LIMIT 100""", (iid,))
+        return rows_to_dicts(cur)
 
 
 @app.post("/api/items/{iid}/move")
@@ -2150,6 +2184,33 @@ def create_comment(node_id: int, body: CommentIn, share: str | None = None,
         cur.execute("""INSERT INTO comments (node_id, user_id, content)
                        VALUES (%s, %s, %s) RETURNING id, node_id, content, created_at""",
                     (node_id, user["id"], body.content.strip()))
+        return {**rows_to_dicts(cur)[0], "user_id": user["id"],
+                "username": user["display_name"]}
+
+
+@app.get("/api/items/{iid}/comments")
+def list_item_comments(iid: int, share: str | None = None, user: dict | None = Depends(opt_user)):
+    with pool.connection() as conn, conn.cursor() as cur:
+        item, c = load_item(cur, iid)
+        check_access(cur, c["project_id"], user, share)
+        cur.execute("""SELECT c.id, c.item_id, c.user_id, u.display_name AS username,
+                              u.avatar, c.content, c.created_at
+                       FROM comments c JOIN users u ON u.id = c.user_id
+                       WHERE c.item_id = %s ORDER BY c.created_at""", (iid,))
+        return rows_to_dicts(cur)
+
+
+@app.post("/api/items/{iid}/comments", status_code=201)
+def create_item_comment(iid: int, body: CommentIn, share: str | None = None,
+                        user: dict = Depends(current_user)):
+    if not body.content.strip():
+        raise HTTPException(400, "empty comment")
+    with pool.connection() as conn, conn.cursor() as cur:
+        item, c = load_item(cur, iid)
+        check_comment(cur, c["project_id"], user, share)
+        cur.execute("""INSERT INTO comments (item_id, user_id, content)
+                       VALUES (%s, %s, %s) RETURNING id, item_id, content, created_at""",
+                    (iid, user["id"], body.content.strip()))
         return {**rows_to_dicts(cur)[0], "user_id": user["id"],
                 "username": user["display_name"]}
 

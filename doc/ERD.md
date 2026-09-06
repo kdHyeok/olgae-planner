@@ -5,7 +5,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 기동 시 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 맞춥니다.
 **DB 구조를 바꾸면 이 문서도 함께 고칩니다** (규칙은 [`CLAUDE.md`](../CLAUDE.md) 참고).
 
-- 테이블 19개
+- 테이블 20개
 - 모든 콘텐츠(기능 트리·PRD·이미지·용어·버전)는 **프로젝트(`projects`) 단위**로 소속됩니다.
 
 ## 관계도
@@ -35,6 +35,8 @@ erDiagram
     nodes |o--o{ nodes : "parent_id · 상위 항목"
     nodes |o--o{ comments : "node_id · 노드 코멘트"
     items |o--o{ comments : "item_id · 행 코멘트"
+    items ||--o{ item_events : "item_id · 변경 이력"
+    users |o--o{ item_events : "user_id · 바꾼 사람"
     term_categories |o--o{ terms : "category_id · SET NULL"
 
     users {
@@ -169,6 +171,15 @@ erDiagram
         timestamptz updated_at "수정"
         int created_by FK "만든 사람"
     }
+    item_events {
+        serial id PK "이력 ID"
+        int item_id FK "대상 행"
+        int user_id FK "바꾼 사람"
+        timestamptz at "바뀐 시각"
+        text prop "바뀐 속성 key"
+        jsonb before "이전 값"
+        jsonb after "이후 값"
+    }
     versions {
         serial id PK "버전 ID"
         int project_id FK "소속 프로젝트"
@@ -214,7 +225,8 @@ erDiagram
 | `users` → `versions.user_id` | **NULL 로 바뀜** (SET NULL) — 기록은 `username` 으로 남음 |
 | `projects` → `nodes`, `versions`, `terms`, `term_categories`, `images`, `collections`, `items` | **함께 삭제** (CASCADE) |
 | `collections` → `items` | **함께 삭제** (CASCADE) — 표를 지우면 행이 전부 사라짐 |
-| `items` → `comments.item_id` | **함께 삭제** (CASCADE) |
+| `items` → `comments.item_id`, `item_events` | **함께 삭제** (CASCADE) |
+| `users` → `item_events.user_id` | **NULL 로 바뀜** (SET NULL) — 화면에는 "(탈퇴)" 로 표시 |
 | `users` → `items.created_by` | **NULL 로 바뀜** (SET NULL) |
 | `nodes` → 하위 `nodes` | **함께 삭제** (CASCADE) — 부모를 지우면 하위 트리 전체가 사라짐 |
 | `nodes` → `comments` | **함께 삭제** (CASCADE) |
@@ -329,6 +341,20 @@ erDiagram
 
 OAuth 로그인은 기존 `users.login_id`·비밀번호와 `login_attempts` 잠금 정책을 그대로 사용합니다.
 비밀번호 변경·관리자 재설정·계정 삭제 시 해당 사용자의 미사용 인증 코드와 OAuth 토큰도 폐기됩니다.
+
+### item_events — 행 변경 이력
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `id` | 이력 ID | serial | PK | 자동 증가 | |
+| `item_id` | 대상 행 | int | FK → items(id) CASCADE, NN | | |
+| `user_id` | 바꾼 사람 | int | FK → users(id) SET NULL | | |
+| `at` | 바뀐 시각 | timestamptz | NN | `now()` | |
+| `prop` | 바뀐 속성 | text | NN | | 컬렉션 `schema` 의 속성 key |
+| `before` / `after` | 이전 / 이후 값 | jsonb | | | 속성 타입 그대로(문자열·bool·번호 배열). 값이 **실제로 달라진 속성만** 남긴다 |
+
+`PUT /api/items/{iid}` 가 기록하고 `GET /api/items/{iid}/events` 가 최근 100개를 돌려줍니다.
+행 상세 모달의 "이력" 탭에서 봅니다. 행 추가·삭제는 남기지 않습니다(속성 변경만).
 
 ### settings — 서비스 설정
 
@@ -519,6 +545,7 @@ PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습�
 | `comments_node_id_idx`, `comments_item_id_idx`, `comments_user_id_idx` | 항목·행별 코멘트 |
 | `nodes_project_seq_idx`, `items (project_id, seq)` UK, `items_project_id_idx`, `collections_project_id_idx` | `[[번호]]` 해석 · 프로젝트별 표 |
 | `items_collection_idx` (collection_id, sort_order) | 컬렉션 안 행 목록 순서대로 |
+| `item_events_item_id_idx` (item_id, at DESC) | 행별 이력 최신순 |
 | `images_project_id_idx`, `terms_project_id_idx`, `terms_category_id_idx`, `term_categories_project_id_idx`, `versions_project_id_idx` | 프로젝트별 목록 |
 | `users_login_id_idx` | 로그인 ID 중복 방지 |
 | `sessions_user_id_idx`, `projects_owner_id_idx`, `oauth_codes_user_id_idx`, `oauth_tokens_user_id_idx` | 사용자 삭제 시 연쇄 |

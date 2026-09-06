@@ -201,9 +201,14 @@ server = MCPServer(
     "olgae-planner",
     version="0.1.0",
     instructions=(
-        "PRD 문서와 계층형 기능명세서를 읽고 고치는 툴이다. "
+        "PRD·기능명세서·작업을 읽고 고치는 툴이다. "
         "먼저 list_projects 로 slug 를 얻어 project_id 로 넘기고, get_spec 으로 전체를 읽는다. "
-        "트리를 크게 고치기 전에는 save_version 으로 스냅샷을 남긴다."
+        "PRD 는 표(컬렉션)의 모음이다 — list_collections 로 어떤 표가 있는지 보고 "
+        "search_items 로 행을 찾아 get_item·create_item·update_item 으로 다룬다. "
+        "작업 지시를 받으면 먼저 search_items(collection='tasks') 로 같은 작업이 있는지 찾고, "
+        "있으면 update_item 으로 상태를 옮기며 진행하고 없으면 create_item 으로 만든다. "
+        "기능·행·작업은 모두 seq 번호로 서로 가리킨다 — 본문에 [[PLNT-14]] 라고 쓰면 링크가 된다. "
+        "트리나 표를 크게 고치기 전에는 save_version 으로 스냅샷을 남긴다."
     ),
     auth_server_provider=provider,
     auth=AuthSettings(
@@ -262,6 +267,111 @@ def _numbered(nodes: list[dict]) -> list[dict]:
 def list_projects(ctx: Context) -> list[dict]:
     """내 프로젝트 목록. 각 항목의 slug 를 다른 툴의 project_id 로 넘긴다(숫자 id 는 쓰지 않는다)."""
     return _wrap(main.list_projects, user=_user(ctx))
+
+
+# ---------- 표(컬렉션) 공통 툴 (PLAN 3.3) ----------
+
+def _err_no_coll(key: str):
+    raise ToolError(f"'{key}' 표가 없습니다. list_collections 로 확인하세요.")
+
+
+def _coll_by_key(user: dict, project_id: str, key: str) -> dict:
+    for c in _wrap(main.list_collections, project_id, user=user):
+        if c["key"] == key:
+            return c
+    _err_no_coll(key)
+
+
+def _item_text(item: dict, coll: dict) -> str:
+    """검색용으로 행의 값들을 이어 붙인다."""
+    props = item.get("props") or {}
+    parts = []
+    for prop in coll.get("schema") or []:
+        v = props.get(prop["key"])
+        if isinstance(v, str):
+            parts.append(v)
+        elif isinstance(v, (bool, int, float)):
+            parts.append(str(v))
+    return " ".join(parts)
+
+
+def _find_item(user: dict, project_id: str, seq: int) -> tuple[dict, dict]:
+    for c in _wrap(main.list_collections, project_id, user=user):
+        for it in _wrap(main.list_items, c["id"], user=user):
+            if it["seq"] == seq:
+                return it, c
+    raise ToolError(f"번호 {seq} 인 행이 없습니다. 기능 번호라면 get_spec 을 쓰세요.")
+
+
+@server.tool(meta=OAUTH_META)
+def list_collections(project_id: str, ctx: Context) -> list[dict]:
+    """프로젝트의 표 목록과 각 표의 속성 정의(schema).
+
+    key 는 툴에 넘기는 안정된 이름(prd·tasks·policies…), title 은 화면 이름이다.
+    schema 의 각 속성은 {key, label, type} 이고 type 은
+    text(한 줄) · md(마크다운) · select(options 중 하나) · checkbox(true/false) ·
+    relation(다른 항목 seq 번호의 배열) 중 하나다.
+    """
+    return _wrap(main.list_collections, project_id, user=_user(ctx))
+
+
+@server.tool(meta=OAUTH_META)
+def search_items(project_id: str, ctx: Context, query: str = "",
+                 collection: str | None = None) -> list[dict]:
+    """표의 행을 찾는다. query 는 값 전체에 대한 대소문자 무시 부분 일치, 비우면 전부.
+
+    collection 을 주면 그 표만 본다(예: 'tasks' · 'policies').
+    돌려주는 seq 를 get_item·update_item 에 넘기고, 본문에서는 [[KEY-seq]] 로 가리킨다.
+    """
+    user = _user(ctx)
+    colls = _wrap(main.list_collections, project_id, user=user)
+    if collection:
+        colls = [c for c in colls if c["key"] == collection]
+        if not colls:
+            _err_no_coll(collection)
+    q = (query or "").strip().lower()
+    out = []
+    for c in colls:
+        for it in _wrap(main.list_items, c["id"], user=user):
+            if q and q not in _item_text(it, c).lower() and q not in str(it["seq"]):
+                continue
+            out.append({"seq": it["seq"], "collection": c["key"], "props": it["props"]})
+    return out[:200]
+
+
+@server.tool(meta=OAUTH_META)
+def get_item(project_id: str, seq: int, ctx: Context) -> dict:
+    """번호로 표의 행 하나를 가져온다. 속성 정의(schema)도 함께 준다."""
+    user = _user(ctx)
+    it, c = _find_item(user, project_id, seq)
+    return {"seq": it["seq"], "collection": c["key"], "props": it["props"],
+            "schema": c["schema"]}
+
+
+@server.tool(meta=OAUTH_META)
+def create_item(project_id: str, collection: str, props: dict, ctx: Context) -> dict:
+    """표에 행을 추가한다. props 는 {속성key: 값} — 속성 key 는 list_collections 로 확인한다.
+
+    스키마에 없는 key 는 무시되고, select 는 options 중 하나여야 하며,
+    relation 은 번호(seq)의 배열이다. 예: {"title": "로그인 고치기", "status": "할일"}
+    """
+    user = _user(ctx)
+    c = _coll_by_key(user, project_id, collection)
+    it = _wrap(main.create_item, c["id"], {"props": props}, user=user)
+    return {"seq": it["seq"], "collection": collection, "props": it["props"]}
+
+
+@server.tool(meta=OAUTH_META)
+def update_item(project_id: str, seq: int, props: dict, ctx: Context) -> dict:
+    """행의 속성을 고친다. 준 속성만 덮어쓰고 나머지는 그대로 둔다.
+
+    작업 상태를 옮길 때 쓴다 — 예: props={"status": "진행중"}.
+    바뀐 값은 이력으로 남아 누가 언제 무엇을 바꿨는지 화면에서 볼 수 있다.
+    """
+    user = _user(ctx)
+    it, c = _find_item(user, project_id, seq)
+    out = _wrap(main.update_item, it["id"], {"props": props}, user=user)
+    return {"seq": out["seq"], "collection": c["key"], "props": out["props"]}
 
 
 @server.tool(meta=OAUTH_META)
