@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS item_events (
 
 ### 1단계 — 그릇 (데이터 모양이 굳는다. 가장 신중하게)
 
-- [x] **1.1 스키마·백필** — `backend/main.py` `init_db()`: §4 DDL, §4 백필 3개. `doc/ERD.md` 갱신(관계도·삭제 규칙·상세 표·인덱스·문자열 참조).
+- [x] **1.1 스키마·백필** — `backend/main.py` `init_db()`: §4 DDL, §4 백필 3개. `docs/ERD.md` 갱신(관계도·삭제 규칙·상세 표·인덱스·문자열 참조).
   완료: 기동 후 `\d collections`, `\d items` 정상 · 기존 프로젝트에 `prd`·`tasks` 컬렉션과 legacy 섹션 생김 · 모든 노드에 seq · `next_seq` = 최대 seq.
   _2026-09-06 확인: 테이블 19개, 프로젝트 1 → key `P1`, 노드 19개 전부 seq, `prd` 10섹션(seq 20~29, "기존 PRD" 11,432자), `tasks` 빈 board, `comments_target_chk` 생성._
 - [x] **1.2 번호 발급·해석 API** — `alloc_seq(cur, pid)` 헬퍼, `GET /api/projects/{slug}/resolve/{seq}` (노드·행 공통 해석, §6 형태), `PUT /api/projects/{slug}/key` (공동 소유자 이상). `create_node` 가 seq 부여. `create_project` 가 `project_key()` 로 키 부여 + `seed_collections()`.
@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS item_events (
 ### 각 단계 끝의 공통 확인
 
 - `docker compose up -d --build backend frontend` 후 브라우저 실사용 확인(CLAUDE.md).
-- `doc/ERD.md` 와 `\dt` · `\d+` 대조.
+- `docs/ERD.md` 와 `\dt` · `\d+` 대조.
 - 검증용 데이터(행·작업·프로젝트) 원복. **실제 프로젝트에서 파괴적 동작 시험 금지.**
 - 커밋·푸시는 사용자가 요청할 때만.
 
@@ -341,6 +341,7 @@ CREATE TABLE IF NOT EXISTS item_events (
 | 2026-09-06 | 2.1 ~ 2.9 | 링크 칩·relation 편집기·역참조·추적표·칸반·이력·행 코멘트·`?item=` 라우팅·문서. **2단계 완료.** 미커밋. |
 
 | 2026-09-06 | 3.1 ~ 3.6 | 스키마 편집 UI · 표 추가 · MCP 공통 툴 5개 · SKILL.md · 프로젝트 키 편집 · 문서. **3단계 완료 = 이 계획 전체 완료.** |
+| 2026-09-07 | 후속 | 이력: 정규화 비교 · 10분 안 연속 편집 합침 · 순변화 없으면 삭제 · 개별 삭제 API. 행/섹션 추가 버튼을 표 아래로, 추가 뒤 자동 스크롤 제거. DB: `pg_trgm` + `items_props_trgm_idx`, 군더더기 `(project_id)` 인덱스 제거, MCP `search_items`·`get_item` 을 SQL 한 번으로(전체 적재 → 인덱스 조회). |
 
 **다음 할 일**: 없음. 이 계획은 끝났다. 새 작업은 새 계획 문서로 시작한다.
 

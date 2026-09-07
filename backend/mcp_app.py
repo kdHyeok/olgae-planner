@@ -282,25 +282,11 @@ def _coll_by_key(user: dict, project_id: str, key: str) -> dict:
     _err_no_coll(key)
 
 
-def _item_text(item: dict, coll: dict) -> str:
-    """검색용으로 행의 값들을 이어 붙인다."""
-    props = item.get("props") or {}
-    parts = []
-    for prop in coll.get("schema") or []:
-        v = props.get(prop["key"])
-        if isinstance(v, str):
-            parts.append(v)
-        elif isinstance(v, (bool, int, float)):
-            parts.append(str(v))
-    return " ".join(parts)
-
-
 def _find_item(user: dict, project_id: str, seq: int) -> tuple[dict, dict]:
-    for c in _wrap(main.list_collections, project_id, user=user):
-        for it in _wrap(main.list_items, c["id"], user=user):
-            if it["seq"] == seq:
-                return it, c
-    raise ToolError(f"번호 {seq} 인 행이 없습니다. 기능 번호라면 get_spec 을 쓰세요.")
+    hit = _wrap(main.item_by_seq, project_id, seq, user=user)
+    if not hit:
+        raise ToolError(f"번호 {seq} 인 행이 없습니다. 기능 번호라면 get_spec 을 쓰세요.")
+    return hit
 
 
 @server.tool(meta=OAUTH_META)
@@ -324,19 +310,11 @@ def search_items(project_id: str, ctx: Context, query: str = "",
     돌려주는 seq 를 get_item·update_item 에 넘기고, 본문에서는 [[KEY-seq]] 로 가리킨다.
     """
     user = _user(ctx)
-    colls = _wrap(main.list_collections, project_id, user=user)
-    if collection:
-        colls = [c for c in colls if c["key"] == collection]
-        if not colls:
-            _err_no_coll(collection)
-    q = (query or "").strip().lower()
-    out = []
-    for c in colls:
-        for it in _wrap(main.list_items, c["id"], user=user):
-            if q and q not in _item_text(it, c).lower() and q not in str(it["seq"]):
-                continue
-            out.append({"seq": it["seq"], "collection": c["key"], "props": it["props"]})
-    return out[:200]
+    if collection and collection not in {c["key"] for c in _wrap(main.list_collections, project_id, user=user)}:
+        _err_no_coll(collection)
+    return [{"seq": r["seq"], "collection": r["collection"], "props": r["props"]}
+            for r in _wrap(main.search_items, project_id, q=query or "", collection=collection or "",
+                           user=user)]
 
 
 @server.tool(meta=OAUTH_META)

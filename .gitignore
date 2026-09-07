@@ -1,3 +1,17 @@
 .claude/
-*.log
 .env
+*.log
+
+# 파이썬 · 도구 찌꺼기
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ruff_cache/
+.pytest_cache/
+
+# 편집기 · OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

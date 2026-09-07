@@ -244,7 +244,7 @@
   .prd-doc h6 { font-size: 13px; margin: 14px 0 4px; color: #777; }
   .prd-doc ul { padding-left: 22px; margin: 8px 0; }
   .prd-doc { cursor: text; }
-  /* ---- PRD 탭: 컬렉션(커스텀 표). doc/PLAN-collections.md 1.5 ---- */
+  /* ---- PRD 탭: 컬렉션(커스텀 표). docs/PLAN-collections.md 1.5 ---- */
   .coll-wrap { display: flex; gap: 20px; align-items: flex-start; max-width: 1200px; margin: 0 auto; }
   .coll-toc { position: sticky; top: 12px; width: 180px; flex: none; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
   .coll-toc a { color: #555; text-decoration: none; padding: 6px 10px; border-radius: 6px; display: flex; justify-content: space-between; gap: 8px; }
@@ -253,6 +253,7 @@
   .coll-card { background: #fff; border: 1px solid #e5e5e0; border-radius: 10px; padding: 18px 22px; }
   .coll-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .coll-head h2 { font-size: 18px; flex: 1; margin: 0; }
+  .coll-foot { margin-top: 10px; }
   .coll-sec { max-width: none; margin: 0 0 14px; padding: 22px 26px; }
   .sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
   .sec-head h1 { font-size: 20px; margin: 0; flex: 1; cursor: text; }
@@ -519,10 +520,12 @@ function toast(msg) {
   setTimeout(() => el.remove(), 3000);
 }
 let pending = null;  // 확인이 필요한 동작: 같은 버튼을 한 번 더 눌러야 실행
+// render() 는 모달을 다시 그리지 않으므로, 모달이 열려 있으면 따로 그린다
+const repaint = () => { render(); if (!document.getElementById('modal').hidden) paintModal(); };
 function twoStep(key, fn) {
   if (pending !== key) {
-    pending = key; render();
-    setTimeout(() => { if (pending === key) { pending = null; render(); } }, 5000);
+    pending = key; repaint();
+    setTimeout(() => { if (pending === key) { pending = null; repaint(); } }, 5000);
     return;
   }
   pending = null; fn();
@@ -1006,7 +1009,7 @@ document.addEventListener('click', e => {
 });
 
 // ---------- 내보내기 / 이미지 정리 ----------
-// ---------- 마크다운 내보내기 (doc/PLAN-collections.md §9) ----------
+// ---------- 마크다운 내보내기 (docs/PLAN-collections.md §9) ----------
 // 순서: PRD 컬렉션들 → 작업 → 기능명세서. [[P1-14]] 와 relation 은 문서 안 앵커 링크로.
 function resolveLocal(seq) {
   const n = nodes.find(x => x.seq === seq);
@@ -2704,7 +2707,7 @@ async function deleteComment(id, nodeId) {
 
 let prdCaret = null;   // 편집 화면에서 커서를 놓을 위치
 
-// ---------- PRD 탭 = 컬렉션(커스텀 표) (doc/PLAN-collections.md 1.5) ----------
+// ---------- PRD 탭 = 컬렉션(커스텀 표) (docs/PLAN-collections.md 1.5) ----------
 // 문서 보기(prd): 행 하나가 섹션 하나. 표 보기: 스키마의 속성이 열. board 는 2단계까지 표로 보인다.
 let colls = [], collItems = new Map();          // 컬렉션 id → 행 배열 (각 행에 _cid 를 붙여 둔다)
 const collById = id => colls.find(c => c.id === id);
@@ -2914,7 +2917,8 @@ function collSettingsHTML() {
           : p.type === 'relation'
           ? `<select onchange="collEditSet(${i},'target',this.value||undefined)" style="width:100%">
               <option value="">아무 표·기능</option>
-              ${colls.map(c => `<option value="${esc(c.key)}" ${c.key === p.target ? 'selected' : ''}>${esc(c.title)} 만</option>`).join('')}</select>`
+              <option value="${NODE_TARGET}" ${p.target === NODE_TARGET ? 'selected' : ''}>기능명세서 만</option>
+              ${colls.map(c => `<option value="${esc(c.key)}" ${c.key === p.target ? 'selected' : ''}>${esc(collLabel(c))} 만</option>`).join('')}</select>`
           : '<span class="hint" style="margin:0">—</span>'}</div>
         <div style="white-space:nowrap">
           <button class="mv" onclick="collEditMove(${i},-1)" ${i === 0 ? 'disabled' : ''}>▲</button>
@@ -3015,11 +3019,11 @@ function collectionHTML(k) {
     <header class="coll-head"><h2>${esc(k.title)}</h2><span class="hint" style="margin:0">${items.length}개</span>
       ${k.view !== 'document' ? `<button class="btn" onclick="toggleTrace(${k.id})">${traceOn.has(k.id) ? '표로 보기' : '추적표'}</button>` : ''}
       ${canEdit() ? `<button class="btn" title="표 설정 · 속성 편집" onclick="openCollSettings(${k.id})">설정</button>` : ''}
-      ${canEdit() ? `<button class="btn" onclick="addItem(${k.id})">${k.view === 'document' ? '+ 섹션 추가' : '+ 행 추가'}</button>` : ''}
     </header>
     ${k.view === 'document' ? documentHTML(items)
       : traceOn.has(k.id) ? traceHTML(k, items)
-      : k.view === 'board' ? boardHTML(k, items) : tableHTML(k, items)}</section>`;
+      : k.view === 'board' ? boardHTML(k, items) : tableHTML(k, items)}
+    ${canEdit() ? `<div class="coll-foot"><button class="btn" onclick="addItem(${k.id})">${k.view === 'document' ? '+ 섹션 추가' : '+ 행 추가'}</button></div>` : ''}</section>`;
 }
 // 이 행을 가리키는 것이 있으면 번호 아래에 "참조 N" — 누르면 목록
 const refBadge = seq => {
@@ -3265,7 +3269,7 @@ function relCandidates() {
   const match = c => !q || String(c.seq).includes(q) || (c.title || '').toLowerCase().includes(q)
     || seqLabel(c.seq).toLowerCase().includes(q);
   let out = [];
-  if (!prop.target && !relPick.child)
+  if ((!prop.target || prop.target === NODE_TARGET) && !relPick.child)
     out = nodes.filter(n => n.seq != null).map(n => ({ kind: 'node', seq: n.seq, title: n.title, group: '기능명세서' }));
   for (const [cid, arr] of collItems) {
     const k = collById(cid);
@@ -3326,7 +3330,9 @@ function relPickerHTML() {
       <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="closeModal()">닫기</button></div>`;
   }
   return `<h3 style="margin-bottom:6px">${esc(prop.label)} 연결</h3>
-    <p class="hint" style="margin:0 0 12px">${prop.target ? `<b>${esc((colls.find(c => c.key === prop.target) || {}).title || prop.target)}</b> 표의 행만 연결할 수 있습니다.` : '기능과 표의 행을 모두 연결할 수 있습니다.'}</p>
+    <p class="hint" style="margin:0 0 12px">${prop.target === NODE_TARGET ? '<b>기능명세서</b>의 기능만 연결할 수 있습니다.'
+      : prop.target ? `<b>${esc((colls.find(c => c.key === prop.target) || {}).title || prop.target)}</b> 표의 행만 연결할 수 있습니다.`
+      : '기능과 표의 행을 모두 연결할 수 있습니다.'}</p>
     <div class="backrefs" style="margin:0 0 12px">${cur.length
       ? cur.map(seq => `<span class="refchip ${(seqInfo(seq) || {}).kind === 'node' ? 'node' : 'item'}">
           <b>${esc(seqLabel(seq))}</b><span class="rt">${esc((seqInfo(seq) || {}).title || '')}</span>
@@ -3370,7 +3376,6 @@ async function addItem(cid, preset) {
     if (coll.view === 'board') { openItem(it.id); return; }
     const el = document.querySelector(`[data-item="${it.id}"] ${coll.view === 'document' ? '.sec-title' : '.text-cell, .md-cell'}`);
     if (el && firstKey) editItemProp(null, el, it.id, firstKey);
-    scrollToColl(cid);
   } catch (err) { toast(err.detail || '추가 실패'); }
 }
 // ---------- 행 상세 모달: 속성 · 이력 · 코멘트 (PLAN 2.5·2.6·2.7) ----------
@@ -3404,6 +3409,11 @@ const propValueHTML = (it, c) => {
   }
 };
 // 자기 표를 가리키는 relation(상위 작업). 하위는 저장하지 않고 이걸 뒤집어 구한다
+// 표 key 는 소문자로 시작하므로(COLL_KEY_RE) '#' 로 시작하는 이 값과 절대 겹치지 않는다.
+const NODE_TARGET = '#nodes';
+// 이름이 같은 표가 둘 이상이면 key 를 붙여 구분한다.
+const collLabel = c => colls.filter(x => x.title === c.title).length > 1
+  ? `${c.title} (${c.key})` : c.title;
 const selfRefProp = k => (k.schema || []).find(x => x.type === 'relation' && x.target === k.key);
 function childrenOfItem(k, seq) {
   const prop = selfRefProp(k);
@@ -3440,7 +3450,8 @@ function itemHTML() {
     ? (itemView.events.length ? itemView.events.map(e => `<div class="ev">
           <span class="when">${new Date(e.at).toLocaleString()}</span>
           <span style="flex:1">${esc(e.username || '(탈퇴)')} · <b>${esc((cols.find(c => c.key === e.prop) || {}).label || e.prop)}</b>
-            ${esc(evValue(e.before))} → ${esc(evValue(e.after))}</span></div>`).join('')
+            ${esc(evValue(e.before))} → ${esc(evValue(e.after))}</span>
+          ${canEdit() ? `<button class="mv danger" title="이 기록 삭제" onclick="twoStep('ev:${e.id}', () => deleteEvent(${it.id},${e.id}))">${askLabel('ev:' + e.id, '✕')}</button>` : ''}</div>`).join('')
         : '<p class="hint" style="padding:10px 0">아직 바뀐 기록이 없습니다.</p>')
     : t === 'comments'
     ? `<div style="margin-bottom:8px">${itemView.comments.length
@@ -3487,6 +3498,13 @@ function itemHTML() {
     <div class="btnrow" style="margin-top:16px">
       ${canEdit() ? `<button class="btn danger" onclick="twoStep('idel:${it.id}', () => { closeModal(); deleteItem(${it.id}); })">${askLabel('idel:' + it.id, '삭제')}</button>` : ''}
       <button class="btn" onclick="closeModal()">닫기</button></div>`;
+}
+async function deleteEvent(iid, eid) {
+  try {
+    await api(`/api/items/${iid}/events/${eid}`, { method: 'DELETE' });
+    itemView.events = itemView.events.filter(e => e.id !== eid);
+    paintModal();
+  } catch (err) { toast(err.detail || '삭제 실패'); }
 }
 async function addItemComment() {
   const box = document.getElementById('icmt-in');

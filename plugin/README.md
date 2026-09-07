@@ -98,7 +98,7 @@ PRD·기능명세서 내용을 쓰거나 고칠 때는 `plugin/skills/olgae-plan
 ## ChatGPT
 
 ChatGPT에서는 이 저장소를 설치하거나 `OLGAE_TOKEN`을 넣지 않습니다. 새 플러그인의 서버 URL에
-`https://prd.donhse.duckdns.org/mcp`를 입력하고 인증을 **OAuth**로 선택하면, 처음 사용할 때
+`<PUBLIC_URL>/mcp`(예: `https://olgae.example.com/mcp`)를 입력하고 인증을 **OAuth**로 선택하면, 처음 사용할 때
 얼개 플래너 로그인·승인 화면이 열립니다. 서버가 DCR·PKCE(S256)·토큰 갱신을 처리합니다.
 
 ## MCP 만 붙이기 (플러그인 없이)

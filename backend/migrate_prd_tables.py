@@ -1,4 +1,4 @@
-"""기존 PRD 마크다운의 표(POL·NFR·DEC·AT)를 컬렉션 행으로 옮긴다. doc/PLAN-collections.md §7 · 1.10
+"""기존 PRD 마크다운의 표(POL·NFR·DEC·AT)를 컬렉션 행으로 옮긴다. docs/PLAN-collections.md §7 · 1.10
 
     docker compose exec -T backend python migrate_prd_tables.py <slug>          # DRY RUN: 무엇을 옮길지만 출력
     docker compose exec -T backend python migrate_prd_tables.py <slug> --apply  # 실제 삽입

@@ -4,19 +4,19 @@
 `backend`(FastAPI + `main.py` 하나) · `db`(PostgreSQL 16) 를 띄운다.
 
 - 기능·API 목록: [`README.md`](README.md)
-- DB 구조: [`doc/ERD.md`](doc/ERD.md)
-- **진행 중인 큰 작업**: [`doc/PLAN-collections.md`](doc/PLAN-collections.md)
+- DB 구조: [`docs/ERD.md`](docs/ERD.md)
+- **진행 중인 큰 작업**: [`docs/PLAN-collections.md`](docs/PLAN-collections.md)
   — PRD 구조화·커스텀 표·작업판. 결정 사항과 체크리스트가 있으니 이어서 할 때 먼저 읽고, 끝나면 진행 상태를 갱신한다.
 - 문서 내용 작성 규칙: [`plugin/skills/olgae-planner/SKILL.md`](plugin/skills/olgae-planner/SKILL.md)
   — PRD·기능명세서 본문을 쓰거나 고칠 때(MCP 툴 사용 포함) 이 규칙을 따른다.
 
 ## DB 를 바꿀 때
 
-1. **먼저 [`doc/ERD.md`](doc/ERD.md) 를 읽는다.**
+1. **먼저 [`docs/ERD.md`](docs/ERD.md) 를 읽는다.**
 2. `init_db()` 는 기동마다 실행되니 **멱등**하게 쓴다 —
    `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`.
    컬럼 삭제·타입 변경은 이 방식으로 안 되니 조건부로 쓰고 이유를 문서에 남긴다.
-3. **바꾼 뒤 같은 작업 안에서 [`doc/ERD.md`](doc/ERD.md) 를 갱신한다.**
+3. **바꾼 뒤 같은 작업 안에서 [`docs/ERD.md`](docs/ERD.md) 를 갱신한다.**
    관계도 · 삭제 규칙 · 테이블 상세 표 · 문자열 참조 · 인덱스. 새 컬럼에는 한글 이름을 붙이고,
    행(데이터) 값은 적지 않는다. API 필드가 바뀌면 `README.md` 의 API 표와
    `backend/mcp_app.py`(핸들러를 재사용하는 /mcp MCP 서버)도 함께 확인한다.

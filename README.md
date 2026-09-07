@@ -89,7 +89,7 @@
   - nginx 가 `try_files $uri /index.html` 로 모든 경로를 앱 셸로 넘깁니다(SPA)
   - `/admin` 은 앱 셸만 공개되고 데이터는 없습니다. `robots.txt` 로 `Disallow`,
     응답에 `X-Robots-Tag: noindex, nofollow` 를 붙여 색인을 막습니다
-- **PRD 구조화 · 커스텀 표(컬렉션) · 작업** — 설계와 결정은 [doc/PLAN-collections.md](doc/PLAN-collections.md)
+- **PRD 구조화 · 커스텀 표(컬렉션) · 작업** — 설계와 결정은 [docs/PLAN-collections.md](docs/PLAN-collections.md)
   - PRD 탭은 **표(컬렉션)의 모음**입니다. 기본 `PRD` 표는 섹션 문서(제목 + 마크다운 본문), 그 밖의 표는
     속성(`text` · `md` · `select` · `checkbox` · `relation`)이 열인 표. 왼쪽 목차로 표 사이를 이동
   - 기존 마크다운 PRD 는 첫 섹션 "기존 PRD" 로 그대로 보존. 안의 표(정책·NFR·미결정·테스트)는
@@ -194,8 +194,8 @@ docker compose up -d --build
 ### 포트/설정 변경
 
 - 서비스 포트: `docker-compose.yml`의 `frontend.ports`(`"3000:80"`) 수정
-- OAuth 공개 주소: `PUBLIC_URL` (기본값 `https://prd.donhse.duckdns.org`). 다른 도메인에 배포하면
-  `.env`에 `PUBLIC_URL=https://실제-도메인`을 지정합니다. HTTPS 주소와 `/mcp` 외부 경로가 실제 접속 주소와 같아야 합니다
+- OAuth 공개 주소: `PUBLIC_URL` (기본값 `http://localhost:3000`). 외부에 배포하면
+  `.env`에 `PUBLIC_URL=https://실제-도메인`을 반드시 지정합니다. HTTPS 주소와 `/mcp` 외부 경로가 실제 접속 주소와 같아야 합니다
 - DB 계정/비밀번호: `.env` 의 `POSTGRES_USER`·`POSTGRES_PASSWORD`·`POSTGRES_DB`
   (`DATABASE_URL` 은 compose 가 이 값들로 조립합니다. 기존 볼륨의 비밀번호는 최초 생성 시점에 정해지므로,
   바꾸려면 `docker compose down -v` 로 초기화해야 합니다)
@@ -221,7 +221,9 @@ docker compose up -d --build
 | GET / POST | `/api/collections/{cid}/items` | 행 목록 / 행 추가 (`{props, after?}`) — 번호(seq) 자동 발급 |
 | PUT / DELETE | `/api/items/{iid}` | 행 속성 부분 수정 (`{props}`, 스키마에 없는 key 무시·타입 검증) / 삭제 |
 | POST | `/api/items/{iid}/move` | 같은 표 안에서 한 칸 위·아래 (`{dir}` = -1 또는 1) |
-| GET | `/api/items/{iid}/events` | 행 변경 이력 (최근 100) |
+| GET | `/api/items/{iid}/events` | 행 변경 이력 (최근 20). 내용이 실제로 달라진 저장만, 같은 사람의 10분 안 연속 편집은 한 기록으로, 되돌아오면 기록 없음 |
+| DELETE | `/api/items/{iid}/events/{eid}` | 이력 하나 삭제 — 편집자 이상 |
+| GET | `/api/projects/{pid}/items` | 행 검색 `?q=&collection=` — 값 부분 일치(대소문자 무시) 또는 번호, 최대 200. `pg_trgm` 인덱스를 탄다 |
 | GET / POST | `/api/items/{iid}/comments` | 행 코멘트 목록 / 작성 (`{content}`) |
 | PUT | `/api/projects/{slug}/key` | 번호 앞부분 변경 (`{key}`, 2~5자 대문자) — 소유자만 |
 | GET | `/api/projects/{pid}/resolve/{seq}` | 번호 → 기능 노드 또는 표 행 (`{kind, id, title, collection?, label}`) |
@@ -277,7 +279,7 @@ OAuth access token은 1시간, refresh token은 30일이며 갱신할 때 둘 �
 
 ### ChatGPT 연결
 
-1. ChatGPT의 새 플러그인에서 서버 URL에 `https://prd.donhse.duckdns.org/mcp`를 입력합니다.
+1. ChatGPT의 새 플러그인에서 서버 URL에 `<PUBLIC_URL>/mcp`(예: `https://olgae.example.com/mcp`)를 입력합니다.
 2. 인증은 **OAuth**를 선택합니다. DCR로 공개 클라이언트가 등록되고 `client_secret`은 발급하지 않습니다.
 3. 처음 툴을 사용할 때 열리는 얼개 플래너 화면에서 기존 아이디·비밀번호로 로그인하고 승인합니다.
 
@@ -398,9 +400,10 @@ claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local
 
 ```
 ├── docker-compose.yml
-├── CLAUDE.md            # 작업 규칙 (DB 변경 시 doc/ERD.md 갱신 등)
-├── doc/
-│   └── ERD.md           # DB 스키마 문서 (관계도 · 컬럼 · 키 · 삭제 규칙)
+├── CLAUDE.md            # 작업 규칙 (DB 변경 시 docs/ERD.md 갱신 등)
+├── docs/
+│   ├── ERD.md           # DB 스키마 문서 (관계도 · 컬럼 · 키 · 삭제 규칙)
+│   └── PLAN-collections.md  # PRD 구조화 · 커스텀 표 · 작업판 설계와 진행 상태
 ├── plugin/              # Claude/Codex 플러그인 (MCP 연결 + olgae-planner 스킬)
 │   ├── .claude-plugin/plugin.json
 │   ├── .codex-plugin/plugin.json
@@ -419,7 +422,7 @@ claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local
     └── index.html       # SPA 전체 (빌드 도구 없음)
 ```
 
-DB 구조는 [`doc/ERD.md`](doc/ERD.md) 에 관계도와 컬럼 설명이 있습니다.
+DB 구조는 [`docs/ERD.md`](docs/ERD.md) 에 관계도와 컬럼 설명이 있습니다.
 
 ## 주의
 
@@ -431,7 +434,7 @@ DB 구조는 [`doc/ERD.md`](doc/ERD.md) 에 관계도와 컬럼 설명이 있습
   (아니면 로그인 잠금이 프록시 IP 하나로 뭉쳐 모든 사용자가 함께 잠깁니다)
 - 신규 가입은 승인제를 유지하거나 관리자 페이지에서 차단
 - `MCP_ALLOWED_HOSTS` 에 배포 도메인 지정 (비우면 Host 검사가 꺼집니다)
-- `PUBLIC_URL` 이 실제 외부 HTTPS 주소와 일치하는지 확인 (기본 운영 주소는 `https://prd.donhse.duckdns.org`)
+- `PUBLIC_URL` 이 실제 외부 HTTPS 주소와 일치하는지 확인 (`.env` 에서 지정, 기본값은 localhost 라 배포 시 반드시 바꾼다)
 - 이미지는 URL 을 알면 인증 없이 열립니다(`/api/images/<id>`, id 는 128비트 난수)
 - 업로드는 PNG·JPEG·GIF·WebP 만 받고 앞바이트로 검증합니다(SVG 는 스크립트를 품을 수 있어 거부).
   프로필 이미지(data URL)도 base64 이미지 형식만 허용합니다
