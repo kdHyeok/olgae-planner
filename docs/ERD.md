@@ -358,8 +358,12 @@ OAuth 로그인은 기존 `users.login_id`·비밀번호와 `login_attempts` 잠
 
 **남기는 기준** — 이력은 "고친 기록"이므로 다음은 남기지 않습니다.
 
-- 값이 실제로 달라지지 않은 저장
-- **비어 있던 칸을 처음 채운 경우**(`before` 가 `null`·`""`·`[]`·`false`) — 새 행을 채우는 과정이 이력을 덮는 것을 막습니다
+- 내용이 실제로 달라지지 않은 저장 — 앞뒤 공백·줄바꿈만 다른 글, `null`·`""`·`[]`·`false` 사이의 차이는 같은 값으로 봅니다(`norm`)
+- **비어 있던 칸을 처음 채운 경우**(`before` 가 비움) — 새 행을 채우는 과정이 이력을 덮는 것을 막습니다
+
+같은 사람이 같은 칸을 **10분**(`EVENT_MERGE_MIN`) 안에 잇달아 고치면 한 기록으로 합칩니다(`after` 만 갱신).
+합친 결과가 처음 값으로 돌아오면(아이콘을 눌러 보고 되돌린 경우) 그 기록은 지워집니다 — 순변화가 없으면 이력도 없습니다(`record_event`).
+`DELETE /api/items/{iid}/events/{eid}` 로 하나씩 지울 수 있습니다(편집자 이상).
 
 행마다 **최신 20개**(`ITEM_EVENT_KEEP`)만 남기고, 새 이력을 쓸 때 초과분을 지웁니다(`trim_events`).
 
@@ -545,13 +549,16 @@ ERD 선으로 보이지 않지만 애플리케이션이 텍스트를 스캔해 �
 
 PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습니다 (`<테이블>_<컬럼>_idx`).
 프로젝트 단위 조회와 `ON DELETE CASCADE` 가 전부 이 컬럼들을 타기 때문입니다.
+예외는 `items.project_id` · `collections.project_id` — UNIQUE `(project_id, seq)` · `(project_id, key)` 의
+앞부분이 같은 역할을 하므로 단일 인덱스를 두지 않습니다(예전 기동이 만든 것은 `init_db` 가 지웁니다).
 
 | 인덱스 | 대상 |
 |---|---|
 | `nodes_project_id_idx`, `nodes_parent_id_idx` | 트리 조회 · 하위 연쇄 삭제 |
 | `comments_node_id_idx`, `comments_item_id_idx`, `comments_user_id_idx` | 항목·행별 코멘트 |
-| `nodes_project_seq_idx`, `items (project_id, seq)` UK, `items_project_id_idx`, `collections_project_id_idx` | `[[번호]]` 해석 · 프로젝트별 표 |
-| `items_collection_idx` (collection_id, sort_order) | 컬렉션 안 행 목록 순서대로 |
+| `nodes_project_seq_idx`, `items_project_id_seq_key` UK, `collections_project_id_key_key` UK | `[[번호]]` 해석 · 번호로 행 찾기(MCP `get_item`) · 프로젝트별 표 |
+| `items_collection_idx` (collection_id, sort_order) | 컬렉션 안 행 목록 순서대로 · 새 행의 `max(sort_order)` |
+| `items_props_trgm_idx` GIN `(props::text) gin_trgm_ops` | 행 검색 `ILIKE '%q%'` (`GET /api/projects/{pid}/items`, MCP `search_items`) · 이미지 참조 정규식 스캔. **`pg_trgm` 확장** 필요 — 없으면 `init_db` 가 경고만 남기고 순차 스캔으로 동작 |
 | `item_events_item_id_idx` (item_id, at DESC) | 행별 이력 최신순 |
 | `images_project_id_idx`, `terms_project_id_idx`, `terms_category_id_idx`, `term_categories_project_id_idx`, `versions_project_id_idx` | 프로젝트별 목록 |
 | `users_login_id_idx` | 로그인 ID 중복 방지 |

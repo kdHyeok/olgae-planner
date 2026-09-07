@@ -36,7 +36,7 @@ LOGIN_FAIL_WINDOW_MIN = 10       # 이 시간 안의 실패만 이어서 센다
 LOGIN_LOCK_STEPS = [30, 60, 180, 300, 600, 1800]   # 잠금이 반복될수록 길어진다(초)
 LOGIN_LOCK_RESET_H = 24          # 이만큼 조용하면 잠금 단계가 처음으로 돌아간다
 PASSWORD_MIN = 8
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://prd.donhse.duckdns.org").rstrip("/")
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:3000").rstrip("/")
 OAUTH_RESOURCE = PUBLIC_URL + "/mcp"
 OAUTH_SCOPE = "mcp"
 OAUTH_ACCESS_PREFIX = "olgo_"
@@ -279,7 +279,7 @@ def init_db():
             DELETE FROM oauth_tokens WHERE refresh_expires_at < now();
         """)
 
-        # ---- 컬렉션(커스텀 표)·번호 체계. 설계는 doc/PLAN-collections.md §4 ----
+        # ---- 컬렉션(커스텀 표)·번호 체계. 설계는 docs/PLAN-collections.md §4 ----
         cur.execute("""
             -- 프로젝트 키(PLNT)와 번호 카운터. 기능·표 행·작업이 번호 하나를 공유한다 (D1·D2)
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS key text;
@@ -313,8 +313,8 @@ def init_db():
                 UNIQUE (project_id, seq)
             );
             CREATE INDEX IF NOT EXISTS items_collection_idx ON items (collection_id, sort_order);
-            CREATE INDEX IF NOT EXISTS items_project_id_idx ON items (project_id);
-            CREATE INDEX IF NOT EXISTS collections_project_id_idx ON collections (project_id);
+            -- items(project_id) · collections(project_id) 단일 인덱스는 두지 않는다:
+            -- UNIQUE (project_id, seq) · UNIQUE (project_id, key) 의 앞부분이 그 역할을 한다
             -- 버전 스냅샷에 컬렉션·행도 담는다. data(노드)·prd 는 그대로 (1.8)
             ALTER TABLE versions ADD COLUMN IF NOT EXISTS collections jsonb;
             -- 행의 속성이 언제 누구에 의해 바뀌었는지 (PLAN 2.6)
@@ -348,6 +348,22 @@ def init_db():
                 END IF;
             END $$;
         """)
+        # 행 검색(ILIKE '%q%')·본문 스캔(정규식)이 인덱스를 타게 하는 trigram 인덱스.
+        # pg_trgm 이 없는 PG 라면 인덱스 없이 간다 — 결과는 같고 순차 스캔으로 느릴 뿐이다.
+        try:
+            cur.execute("SAVEPOINT trgm")
+            cur.execute("""CREATE EXTENSION IF NOT EXISTS pg_trgm;
+                           CREATE INDEX IF NOT EXISTS items_props_trgm_idx
+                               ON items USING gin ((props::text) gin_trgm_ops)""")
+            cur.execute("RELEASE SAVEPOINT trgm")
+        except Exception as e:  # noqa: BLE001 — 확장 부재·권한 부족 어느 쪽이든 기동은 이어 간다
+            cur.execute("ROLLBACK TO SAVEPOINT trgm")
+            import logging
+            logging.getLogger("uvicorn.error").warning(
+                "pg_trgm 인덱스를 만들지 못했습니다. 행 검색은 순차 스캔으로 돕니다: %s", e)
+        # 예전 기동이 만든 군더더기 (project_id) 단일 인덱스를 치운다
+        cur.execute("""DROP INDEX IF EXISTS items_project_id_idx;
+                       DROP INDEX IF EXISTS collections_project_id_idx""")
 
         # 예전 행에는 slug 가 없다. 행마다 다른 난수를 넣어야 하니 여기서 채운다
         cur.execute("SELECT id FROM projects WHERE slug IS NULL")
@@ -386,7 +402,7 @@ def rows_to_dicts(cur):
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-# ---------- 컬렉션(커스텀 표) 템플릿 · 번호 발급 (doc/PLAN-collections.md §4·§5) ----------
+# ---------- 컬렉션(커스텀 표) 템플릿 · 번호 발급 (docs/PLAN-collections.md §4·§5) ----------
 def base36(n: int) -> str:
     digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     out = ""
@@ -1447,7 +1463,7 @@ def remove_member(pid: str, uid: int, user: dict = Depends(current_user)):
                     (pid, uid))
 
 
-# ---------- 컬렉션(커스텀 표) · 행 (doc/PLAN-collections.md §4 · 1.3) ----------
+# ---------- 컬렉션(커스텀 표) · 행 (docs/PLAN-collections.md §4 · 1.3) ----------
 PROP_TYPES = ("text", "md", "select", "checkbox", "relation")
 VIEWS = ("document", "table", "board")
 PROP_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
@@ -1694,20 +1710,12 @@ def update_item(iid: int, body: dict, user: dict = Depends(current_user)):
         props = {**old, **patch}
         cur.execute("UPDATE items SET props = %s, updated_at = now() WHERE id = %s",
                     (json.dumps(props, ensure_ascii=False), iid))
-        # 이력은 "고친 기록"이다. 값이 실제로 달라졌고, 비어 있던 칸을 처음 채운 게 아닐 때만 남긴다
-        wrote = False
+        # 이력은 "고친 기록"이다. 내용이 실제로 달라졌고, 비어 있던 칸을 처음 채운 게 아닐 때만 남긴다
         for key, after in patch.items():
             before = old.get(key)
-            if before == after or is_blank(before):
+            if norm(before) == norm(after) or is_blank(before):
                 continue
-            cur.execute("""INSERT INTO item_events (item_id, user_id, prop, before, after)
-                           VALUES (%s, %s, %s, %s, %s)""",
-                        (iid, user["id"], key,
-                         json.dumps(before, ensure_ascii=False),
-                         json.dumps(after, ensure_ascii=False)))
-            wrote = True
-        if wrote:
-            trim_events(cur, iid)
+            record_event(cur, iid, user["id"], key, before, after)
         item, _ = load_item(cur, iid)
         return public_item(item)
 
@@ -1723,9 +1731,42 @@ def delete_item(iid: int, user: dict = Depends(current_user)):
 ITEM_EVENT_KEEP = 20        # 행마다 남기는 이력 개수. 넘으면 오래된 것부터 지운다
 
 
+EVENT_MERGE_MIN = 10        # 같은 사람이 같은 칸을 이 시간 안에 다시 고치면 한 기록으로 합친다
+
+
 def is_blank(v) -> bool:
     """비어 있는 값(처음 채우는 경우)인지. 이력을 남기지 않는 기준."""
     return v is None or v == "" or v == [] or v is False
+
+
+def norm(v):
+    """'내용이 같다' 를 판단하는 꼴. 앞뒤 공백·줄바꿈만 다른 글, 비움의 여러 표현은 같은 것으로 본다."""
+    if isinstance(v, str):
+        v = v.strip()
+    return None if is_blank(v) else v
+
+
+def record_event(cur, iid: int, uid: int, prop: str, before, after) -> None:
+    """변경 기록 하나. 같은 사람이 같은 칸을 잇달아 고치면(오타 수정·아이콘 눌러 보기) 한 기록으로 합치고,
+    합친 결과 처음 값으로 돌아왔으면 바뀐 게 없으니 기록을 지운다."""
+    cur.execute("""SELECT id, before FROM item_events
+                   WHERE item_id = %s AND prop = %s AND user_id = %s
+                     AND at > now() - make_interval(mins => %s)
+                   ORDER BY at DESC, id DESC LIMIT 1""", (iid, prop, uid, EVENT_MERGE_MIN))
+    row = cur.fetchone()
+    if row:
+        eid, first = row
+        if norm(first) == norm(after):
+            cur.execute("DELETE FROM item_events WHERE id = %s", (eid,))
+        else:
+            cur.execute("UPDATE item_events SET after = %s, at = now() WHERE id = %s",
+                        (json.dumps(after, ensure_ascii=False), eid))
+        return
+    cur.execute("""INSERT INTO item_events (item_id, user_id, prop, before, after)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (iid, uid, prop, json.dumps(before, ensure_ascii=False),
+                 json.dumps(after, ensure_ascii=False)))
+    trim_events(cur, iid)
 
 
 def trim_events(cur, iid: int) -> None:
@@ -1746,6 +1787,54 @@ def list_item_events(iid: int, share: str | None = None, user: dict | None = Dep
                        WHERE e.item_id = %s ORDER BY e.at DESC, e.id DESC LIMIT %s""",
                     (iid, ITEM_EVENT_KEEP))
         return rows_to_dicts(cur)
+
+
+@app.delete("/api/items/{iid}/events/{eid}", status_code=204)
+def delete_item_event(iid: int, eid: int, user: dict = Depends(current_user)):
+    """이력 하나를 지운다 — 편집자 이상."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        item, c = load_item(cur, iid)
+        check_write(cur, c["project_id"], user)
+        cur.execute("DELETE FROM item_events WHERE id = %s AND item_id = %s", (eid, iid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "그 이력이 없습니다")
+
+
+def like_pattern(q: str) -> str:
+    """ILIKE 의 % _ \\ 를 글자 그대로 찾게 감싼다."""
+    esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{esc}%"
+
+
+@app.get("/api/projects/{pid}/items")
+def search_items(pid: str, q: str = "", collection: str = "", share: str | None = None,
+                 user: dict | None = Depends(opt_user)):
+    """프로젝트의 행을 값 부분 일치(대소문자 무시)나 번호로 찾는다. 최대 200개.
+    props::text 의 trigram 인덱스(items_props_trgm_idx)를 탄다."""
+    q = (q or "").strip()
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_access(cur, pid, user, share)
+        cur.execute("""SELECT i.id, i.seq, i.props, c.key AS collection
+                       FROM items i JOIN collections c ON c.id = i.collection_id
+                       WHERE i.project_id = %s
+                         AND (%s = '' OR c.key = %s)
+                         AND (%s = '' OR i.props::text ILIKE %s OR i.seq::text = %s)
+                       ORDER BY c.sort_order, c.id, i.sort_order, i.id LIMIT 200""",
+                    (pid, collection, collection, q, like_pattern(q), q))
+        return rows_to_dicts(cur)
+
+
+def item_by_seq(pid: str, seq: int, user: dict | None = None, share: str | None = None):
+    """번호로 행 하나와 그 표를. MCP 의 get_item·update_item 이 쓴다 (UNIQUE (project_id, seq) 한 번 조회)."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_access(cur, pid, user, share)
+        cur.execute("""SELECT id, seq, props, sort_order, created_at, updated_at, created_by, collection_id
+                       FROM items WHERE project_id = %s AND seq = %s""", (pid, seq))
+        rows = rows_to_dicts(cur)
+        if not rows:
+            return None
+        it = rows[0]
+        return it, public_collection(load_collection(cur, it.pop("collection_id")))
 
 
 @app.post("/api/items/{iid}/move")
