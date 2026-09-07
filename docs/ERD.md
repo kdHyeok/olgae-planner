@@ -561,8 +561,10 @@ PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습�
 | `items_props_trgm_idx` GIN `(props::text) gin_trgm_ops` | 행 검색 `ILIKE '%q%'` (`GET /api/projects/{pid}/items`, MCP `search_items`) · 이미지 참조 정규식 스캔. **`pg_trgm` 확장** 필요 — 없으면 `init_db` 가 경고만 남기고 순차 스캔으로 동작 |
 | `item_events_item_id_idx` (item_id, at DESC) | 행별 이력 최신순 |
 | `images_project_id_idx`, `terms_project_id_idx`, `terms_category_id_idx`, `term_categories_project_id_idx`, `versions_project_id_idx` | 프로젝트별 목록 |
-| `users_login_id_idx` | 로그인 ID 중복 방지 |
-| `sessions_user_id_idx`, `projects_owner_id_idx`, `oauth_codes_user_id_idx`, `oauth_tokens_user_id_idx` | 사용자 삭제 시 연쇄 |
+| `users_login_id_idx`, `users_username_key` | 로그인 ID 중복 방지 (`username` 은 이전 버전 호환용) |
+| `users_status_idx` | 가입 승인 대기 목록 |
+| `sessions_user_id_idx`, `projects_owner_id_idx`, `api_tokens_user_id_idx`, `project_members_user_id_idx`, `oauth_codes_user_id_idx`, `oauth_tokens_user_id_idx` | 사용자 삭제 시 연쇄 · 내 토큰/참여 목록 |
+| `terms_project_id_term_key`, `term_categories_project_id_name_key`, `oauth_tokens_refresh_token_hash_key` | 용어·카테고리 이름 중복 방지 · refresh 토큰 해시 조회 |
 | `oauth_requests_client_id_idx`, `oauth_codes_client_id_idx`, `oauth_tokens_client_id_idx` | OAuth 클라이언트 삭제 시 연쇄 |
 
 ## 레거시 정리 이력

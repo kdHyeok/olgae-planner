@@ -5,8 +5,8 @@
 
 - 기능·API 목록: [`README.md`](README.md)
 - DB 구조: [`docs/ERD.md`](docs/ERD.md)
-- **진행 중인 큰 작업**: [`docs/PLAN-collections.md`](docs/PLAN-collections.md)
-  — PRD 구조화·커스텀 표·작업판. 결정 사항과 체크리스트가 있으니 이어서 할 때 먼저 읽고, 끝나면 진행 상태를 갱신한다.
+- **설계 기록**: [`docs/PLAN-collections.md`](docs/PLAN-collections.md)
+  — PRD 구조화·커스텀 표·작업판의 결정(D1~D14)과 데이터 모델. 컬렉션·번호·링크를 건드리면 먼저 읽는다.
 - 문서 내용 작성 규칙: [`plugin/skills/olgae-planner/SKILL.md`](plugin/skills/olgae-planner/SKILL.md)
   — PRD·기능명세서 본문을 쓰거나 고칠 때(MCP 툴 사용 포함) 이 규칙을 따른다.
 
