@@ -2,7 +2,7 @@
 
 PRD & 기능명세서 서비스를 AI 에이전트에 붙이는 플러그인. 두 가지가 들어 있다.
 
-- **MCP 서버 연결** — 배포 서버의 `/mcp` 엔드포인트(툴 13개: 명세 조회·수정, 용어 사전, 버전, 코멘트)
+- **MCP 서버 연결** — 배포 서버의 `/mcp` 엔드포인트(툴 18개: 명세 조회·수정, 표(정책·요구사항·작업) 행 검색·추가·수정, 용어 사전, 버전, 코멘트)
 - **스킬** `olgae-planner` — 이 서비스의 작성 컨벤션과 산출물 규칙([skills/olgae-planner/SKILL.md](skills/olgae-planner/SKILL.md))
 
 ## 준비: 계정과 토큰
@@ -97,9 +97,8 @@ PRD·기능명세서 내용을 쓰거나 고칠 때는 `plugin/skills/olgae-plan
 
 ## ChatGPT
 
-ChatGPT에서는 이 저장소를 설치하거나 `OLGAE_TOKEN`을 넣지 않습니다. 새 플러그인의 서버 URL에
-`<PUBLIC_URL>/mcp`(예: `https://olgae.example.com/mcp`)를 입력하고 인증을 **OAuth**로 선택하면, 처음 사용할 때
-얼개 플래너 로그인·승인 화면이 열립니다. 서버가 DCR·PKCE(S256)·토큰 갱신을 처리합니다.
+ChatGPT 는 이 저장소도 `OLGAE_TOKEN` 도 쓰지 않는다. 새 플러그인의 서버 URL 에 `<PUBLIC_URL>/mcp` 를 넣고
+인증을 **OAuth** 로 고르면 처음 쓸 때 로그인·승인 화면이 열린다. DCR·PKCE(S256)·토큰 갱신은 서버가 처리한다.
 
 ## MCP 만 붙이기 (플러그인 없이)
 

@@ -1,8 +1,8 @@
 # 계획: PRD 구조화 · 커스텀 표(컬렉션) · 작업판
 
-> **이 문서의 용도** — 다른 세션이 이 작업을 이어받을 때 처음 읽는 문서.
-> 결정은 바꾸지 않는 한 그대로 따르고, 작업은 아래 체크리스트를 위에서부터 진행한다.
-> 진행하면서 [진행 상태](#진행-상태) 절을 갱신한다. 결정을 바꾸면 그 이유를 [결정 사항](#3-결정-사항)에 덧붙인다.
+> **이 문서의 용도** — PRD 구조화 작업의 **설계 기록**. 계획은 2026-09-06 에 전부 끝났다.
+> 결정(D1~D14)·데이터 모델·링크/내보내기 규칙은 지금도 유효하며 코드 주석이 이 문서의 절·항목 번호를 가리킨다.
+> 결정을 바꾸면 [결정 사항](#3-결정-사항)에 새 번호로 이유를 적고, 큰 후속 작업은 [진행 상태](#진행-상태)에 한 줄 남긴다.
 
 - 관련 문서: [ERD.md](ERD.md)(현재 DB), [../README.md](../README.md)(기능·API), [../plugin/skills/olgae-planner/SKILL.md](../plugin/skills/olgae-planner/SKILL.md)(본문 규칙)
 - 작업 규칙은 [../CLAUDE.md](../CLAUDE.md) 를 따른다 — DB 를 바꾸면 같은 작업 안에서 ERD 를 갱신, 커밋은 요청받을 때만.
@@ -240,78 +240,43 @@ CREATE TABLE IF NOT EXISTS item_events (
 
 ## 10. 작업 계획
 
-각 항목은 **완료 조건**이 있고, 끝나면 `[x]` 로 바꾼다. 파일명은 현재 구조 기준(단일 파일 백엔드·프런트).
+전부 완료. 항목 번호(`1.5` · `2.6` …)는 코드 주석이 참조하므로 그대로 둔다.
 
 ### 1단계 — 그릇 (데이터 모양이 굳는다. 가장 신중하게)
 
 - [x] **1.1 스키마·백필** — `backend/main.py` `init_db()`: §4 DDL, §4 백필 3개. `docs/ERD.md` 갱신(관계도·삭제 규칙·상세 표·인덱스·문자열 참조).
-  완료: 기동 후 `\d collections`, `\d items` 정상 · 기존 프로젝트에 `prd`·`tasks` 컬렉션과 legacy 섹션 생김 · 모든 노드에 seq · `next_seq` = 최대 seq.
-  _2026-09-06 확인: 테이블 19개, 프로젝트 1 → key `P1`, 노드 19개 전부 seq, `prd` 10섹션(seq 20~29, "기존 PRD" 11,432자), `tasks` 빈 board, `comments_target_chk` 생성._
 - [x] **1.2 번호 발급·해석 API** — `alloc_seq(cur, pid)` 헬퍼, `GET /api/projects/{slug}/resolve/{seq}` (노드·행 공통 해석, §6 형태), `PUT /api/projects/{slug}/key` (공동 소유자 이상). `create_node` 가 seq 부여. `create_project` 가 `project_key()` 로 키 부여 + `seed_collections()`.
-  완료: 새 노드 생성 시 seq 부여 · 해석 API 가 노드/행 구분 응답.
-  _2026-09-06 확인: 새 노드 seq 30 · `/resolve/1` → node · `/resolve/20` → item(prd, "기존 PRD") · 9999 → 404 · key `1x` → 400, `plnt` → `PLNT` · 목록·공유 응답에 `key`. 1.4 의 백엔드 부분(응답 `key`)도 여기서 끝냄._
 - [x] **1.3 컬렉션·행 API** — `GET/POST /api/projects/{slug}/collections`, `PUT/DELETE /api/collections/{cid}`(스키마·제목·보기·board_by·순서), `GET/POST /api/collections/{cid}/items`(`after` 로 위치 지정), `PUT/DELETE /api/items/{iid}`, `POST /api/items/{iid}/move`(`{dir:±1}`, 노드 ▲▼ 와 같은 방식). `validate_schema`·`validate_props` 가 §4 규칙 검증. 권한: 읽기 `check_access`, 쓰기 `check_write`. 요청 본문은 pydantic 모델 대신 `dict`(속성 이름 `schema` 가 pydantic 예약어라).
-  완료: curl 로 정책 표 만들기 → 행 3개 → select 옵션 밖 값 400 → 삭제.
-  _2026-09-06 확인: 템플릿 표(policies) · 사용자 정의 표(board, 속성 5종) · 같은 key 409 · 잘못된 key/옵션 없는 select 400 · 행 3개(seq 31~33) · select 밖·relation 문자열·스키마 밖 key 400 · 부분 수정 · 이동 · 삭제 · board_by 가 select 아니면 400 · 표 삭제 CASCADE. 끝 상태 = 시작 상태._
 - [x] **1.4 노드 화면 ID** — `detailBody()` 의 `N-0014` → `${project.key}-${n.seq}` (title 에 `[[P1-14]]` 링크 힌트). `GET /api/projects` 와 `/api/shared` 응답에 `key` 포함(1.2 에서).
-  완료: 트리·디렉토리 상세에 `PLNT-14`.
-  _2026-09-06 브라우저 확인: 디렉토리 뷰 첫 노드 상세에 `P1-1`, title `[[P1-1]]`. `detailBody` 는 트리 패널과 공유._
 - [x] **1.5 PRD 탭 = 컬렉션 렌더** — `document` 보기(섹션 카드, 더블클릭 편집, 순서 ▲▼, 섹션 추가/삭제) · `table` 보기(속성 타입별 인라인 편집: text 입력, md 미리보기/더블클릭, select 드롭다운, checkbox; relation 은 1단계에서 `P1-14, 37` 식 번호 입력) · 좌측 목차(컬렉션 순서). 읽기 전용(reader/commenter)이면 편집 진입 차단(기존 `needEdit()` 패턴). 옛 `renderPrd`·`prdClickEdit`·`savePrd` 는 삭제. `prdContent` 는 내보내기(1.7)까지만 남김. board 보기는 2.5 까지 표로 보인다.
-  완료: 브라우저에서 legacy 섹션이 그대로 보이고 편집됨 · 새 섹션 추가 · 표 행 추가/수정/삭제 · 공유 링크로는 편집 안 됨.
-  _2026-09-06 브라우저 확인: legacy 섹션에 원문 PRD 전체(h1·표 10개) · 섹션 추가 → 제목 자동 편집 → Enter 저장 · 본문 Ctrl+Enter 저장 후 md 렌더(용어 칩·강조) · ▲ 이동 · 임시 `policies` 표의 md 셀 저장·Esc 취소 · 삭제 후 10개 원복 · 공유 링크(reader)는 버튼 0개·`canEdit` false. 콘솔 에러 없음. `node --check` 통과. 단순화: 본문 더블클릭 위치→커서 맞춤은 빼고 커서를 끝에 둠._
 - [x] **1.6 작업 탭 (table 보기까지)** — 탭 추가, 라우팅 `tab=tasks`(`viewParams`/`readViewParams`), `renderTasks(c)` 가 `tasks` 컬렉션을 `collectionHTML` 로 표시(board 도 지금은 표). board 는 2단계.
-  완료: 작업 추가·상태 select 변경·삭제.
-  _2026-09-06 브라우저 확인: 탭 활성 · `?tab=tasks` · 열 번호+6속성 · 추가→제목 자동 편집→Enter 저장 · 상태 `진행중` 저장 · 삭제→0 · PRD↔작업 탭 전환과 뒤로 가기 복원._
 - [x] **1.7 내보내기** — `exportMarkdown()` 을 §9 규칙으로 재작성(`resolveLocal`·`itemTitle` 헬퍼). document 컬렉션은 섹션이 `##`, 그 외는 md 속성 있으면 `### P1-14 · 제목` 블록·없으면 표, 작업은 상태별 `###` 묶음, `[[P1-14]]`·relation → `[P1-14 제목](#p1-14)`, 행·노드마다 `<a id="p1-14"></a>`, 노드에 `- ID: P1-14`. `openProjectData()` 의 legacy `/prd` 요청 제거(`prdContent` 미사용).
-  완료: 내보낸 md 를 GitHub 미리보기로 열어 표·링크 확인.
-  _2026-09-06 브라우저 확인(Blob 가로채기): 13,845자 · `## 기존 PRD` + 원문 표 10개 · 섹션 앵커 `p1-20` · `## 작업` + `_(비어 있음)_` · `## 기능명세서` 각 항목 `- ID: P1-1` + 앵커. GitHub 미리보기 확인은 사용자 쪽에서._
 - [x] **1.8 버전 스냅샷·복원** — `versions.collections jsonb` 컬럼 추가. `save_version` 이 컬렉션+행(id·seq·props·sort_order)을 담고 `item_count` 반환, `list_versions` 도 `item_count`. `restore_version` 은 스냅샷에 없는 컬렉션·행을 지운 뒤 UPSERT 로 id·seq 보존, 노드 UPSERT 에 `seq` 포함(옛 스냅샷의 seq 없는 노드는 `alloc_seq` 로 채움), 끝에 `next_seq` 를 최대 번호 이상으로. `NODE_FIELDS` 에 `seq`. 프런트 버전 목록에 "표 행 N개". `versions.prd` 는 legacy 로 유지.
-  완료: 저장 → 행 지우고 제목 바꾸기 → 복원 → 같은 seq 로 돌아옴.
-  _2026-09-06 확인: 저장 `item_count` 10 · 섹션 제목 수정 + 다른 섹션 삭제 → 복원 → 섹션 10개, 제목 원복, 삭제됐던 행이 같은 id·seq 로 복구 · 노드 seq 전부 유지._
 - [x] **1.9 부수 스캔 확장** — `sync_terms` 가 컬렉션 행의 md 속성 값을 본문으로 훑고, `list_images` 의 `used` 가 `items.props::text` 도 검색.
-  완료: 정책 본문에 `` `용어` `` 쓰면 사전에 잡힘 · 정책에 붙인 이미지가 앨범에서 "사용중".
-  _2026-09-06 확인: 섹션 본문에 `` `검증용어` `` → 용어 목록에 등록, 지우면 사라짐 · 본문에 이미지 링크 → 앨범 `used` true._
 - [x] **1.10 기존 PRD 표 이전** — `backend/migrate_prd_tables.py` (§7). 헤더 첫 셀 `ID` 인 표만 보고 행 ID 접두어로 대상을 정한다. DRY RUN 기본, `--apply`, `--undo`. 같은 표에 `legacy_id` 행이 있으면 건너뛴다(멱등).
-  완료: policies 20 · nfr **15** · decisions 23 · tests 41 행 · 각 `legacy_id` 보존 · 원본 md 무손실.
-  _2026-09-06 적용: 삽입 99행(seq 36~135), 재실행 시 전부 건너뜀, legacy 섹션 제목 "기존 PRD (표는 컬렉션으로 옮겨짐)", `projects.prd` 11,432자 그대로. **NFR 은 17이 아니라 15** — 17은 추적표 등 다른 곳의 `NFR-` 언급까지 센 값이었다(§1 표도 정정). 스크립트가 백엔드 이미지에 복사되지 않아 `docker compose cp` 로 넣어 실행 — Dockerfile 보정은 1.11 에서._
 - [x] **1.11 문서** — `README.md`(기능 블록·주소 규칙·내보내기·버전·API 표 8행·마이그레이션 안내), `ERD.md`(`versions.collections`, `data` 에 `seq`, 복원 규칙). `backend/Dockerfile` 에 `migrate_prd_tables.py` COPY.
-  _2026-09-06 확인: 실제 DB 테이블 19개 = ERD 19개. 컬렉션별 행 수 prd 10 · tasks 0 · policies 20 · nfr 15 · decisions 23 · tests 41, 노드 19, `next_seq` 135._
 
 ### 2단계 — 연결과 판
 
 - [x] **2.1 `[[ID]]` 렌더** — `inline()` 에 `[[KEY-n]]` → 칩(`refChip`). 해석은 `seqMap`(노드 + 모든 컬렉션 행)을 클라이언트에서 lazy 하게 만들고 `setNodes`·`loadCollections`·`reloadItems` 에서 무효화. **번호만 보고 찾으므로 앞의 키가 달라도 해석**. 기능=파란 칩 / 표 행=초록 칩 / 못 찾으면 빗금 칩(클릭 불가). 클릭하면 `gotoSeq()` 가 탭까지 바꿔 이동하고 행은 노란 플래시. 미리보기는 `title` 속성(종류 · 제목)으로 — 호버 카드는 만들지 않았다. relation 셀도 같은 칩을 쓴다.
-  _2026-09-06 브라우저 확인: 정책 본문에 `[[P1-1]]`·`[[P1-72]]`·`[[P1-9999]]` → `refchip node`(기능 · 서비스 진입 및 튜토리얼) · `refchip item`(미결정 사항 · 확정 행성 수…) · `refchip miss`. 표 행 칩 클릭 → 이동+플래시, 기능 칩 클릭 → `?tab=spec` + 선택, miss 는 onclick 없음. 본문 원복._
 - [x] **2.2 relation 편집기** — 셀의 `＋` 버튼 → 모달 피커(`openRelPicker`). 현재 연결은 칩 + `✕` 로 해제, 아래 검색창(번호·제목·라벨)으로 후보를 걸러 클릭하면 연결. `target` 있으면 그 표만, 없으면 기능 + 모든 표 행. 후보는 60개까지.
-  _2026-09-06 확인: `tests.related` 피커 열림, 후보 60 → "서비스 진입" 검색 시 1개, 클릭하면 `related=[1]`, 칩 ✕ 로 해제되어 `[]` 원복._
 - [x] **2.3 역참조** — **서버 엔드포인트 대신 클라이언트에서 계산**(`backrefs(seq)`) — 프로젝트의 노드·행이 이미 전부 메모리에 있어 왕복이 불필요하다. 노드 설명·행의 md 값의 `[[…-seq]]` 와 relation 배열을 함께 훑는다. 노드 상세 "이 기능을 가리키는 항목" 칩 줄, 문서 섹션 아래 같은 줄, 표 행 번호 아래 "참조 N" 배지(누르면 목록 모달), 삭제 버튼에 `✕N` + 참조 수 툴팁.
   _데이터가 커지면 서버로 옮긴다(코드에 `ponytail:` 주석). 2026-09-06 확인: tests 행이 `[[P1-1]]` 을 relation 으로 가리키자 `backrefs(1)` 에 잡히고 노드 상세에 "이 기능을 가리키는 항목 1 P1-95 …" 표시._
 - [x] **2.4 추적표 뷰** — 표 카드 헤더의 `추적표` 토글(`traceOn` Set). 행마다 번호·내용·**가리키는 항목** 칩. 저장하지 않고 그때그때 계산.
-  _2026-09-06 확인: tests 41행 추적표, 헤더 3열._
 - [x] **2.5 board 보기** — `boardHTML`: `board_by` select 옵션이 열, 값 없는 카드는 "미지정" 열(비면 숨김). 카드 드래그로 상태 변경(`boardDragStart`/`boardOver`/`boardDrop`), 열마다 `+ 추가`(그 열의 값이 preset), 에픽 카드에 `하위 1/2`(`childProgress`, `parent` relation 이 자기 표를 가리키는 행을 셈). `decisions` 도 board 로 뜬다. 카드 클릭 → 행 상세 모달.
-  _2026-09-06 확인: 열 3개 + 미지정 · 에픽/하위 2개로 `하위 1/2` · 드래그로 상태 변경(사용자가 직접 시연) · `+ 추가` 가 그 열 상태로 생성._
-  **고친 버그**: 열의 `+ 추가` onclick 에 `JSON.stringify(opt)` 를 넣어 큰따옴표가 HTML 속성을 깨뜨렸다(값이 안 들어가 빈 행이 생김). `this.closest('.bcol').dataset.opt` 로 바꿈.
 - [x] **2.6 `item_events`** — `item_events` 테이블. `update_item` 이 **값이 실제로 달라진 속성만** 기록. `GET /api/items/{iid}/events`(최근 100). 행 상세 모달의 "이력" 탭.
-  _2026-09-06 확인: 드래그로 바뀐 상태가 "관리자 · 상태 진행중 → 완료" 로 기록됨._
 - [x] **2.7 코멘트 확장** — `GET/POST /api/items/{iid}/comments`(권한은 그 행이 속한 프로젝트 기준, 쓰기는 `check_comment`). 행 상세 모달의 "코멘트" 탭. 삭제는 기존 `/api/comments/{id}` 재사용.
-  _2026-09-06 확인: 작업 카드에 코멘트 등록·표시._
 - [x] **2.8 라우팅** — `?item=<seq>` / `?node=<seq>` 로 열면 그 항목으로 이동(탭 전환 + 스크롤 + 강조). 없는 번호는 토스트.
-  _2026-09-06 확인: `?node=1` → spec 탭 + 선택 · `?item=<작업 seq>` → **작업 탭 자동 전환** + 카드 표시 · `?item=9999` → "P1-9999 를 찾을 수 없습니다"._
-  **고친 버그 2개**: (1) `seqInfo()` 반환 객체에 `seq` 가 빠져 `flashRow(null)` 이 호출됐다. (2) 첫 렌더의 `syncUrl()` 이 주소에서 `?item=` 을 지운 **뒤에** `readViewParams()` 가 읽어 항상 null 이었다 → 스크립트 로드 시점에 미리 잡아 두고, 파라미터가 없을 때는 지우지 않도록 함.
   강조는 DOM 에 class 를 얹으면 다음 렌더에 지워져서 **상태(`flashSeq`)로 관리**하도록 바꿨다.
 - [x] **2.9 문서** — ERD(`item_events` 표·관계도·삭제 규칙·인덱스, 테이블 20개), README(링크·칸반 기능 블록, API 2행). 오래된 README 서술 3곳 정리 — 맨 위 "PRD 탭: 마크다운 문서 보기/저장", 라우팅 블록의 어긋난 줄 순서, "공유 링크로 누구나 열람·편집 가능"(읽기 전용 정책과 모순).
-  _2026-09-06 확인: DB 테이블 20개 = ERD 20개._
 
 ### 3단계 — 자유도
 
 - [x] **3.1 스키마 편집 UI** — 표 헤더의 `설정` → 모달. 이름 · 보기(문서/표/칸반) · 칸반 열 기준 · 속성 추가/이름/타입/옵션(select)/대상 표(relation)/순서 ▲▼/삭제. 속성 key 는 라벨에서 자동 생성하고 이후 불변(이름만 바뀜). `prd`·`tasks` 는 표 삭제 버튼 대신 안내.
-  _2026-09-06 확인: 속성 추가 → select 로 바꾸고 옵션 3개 → 보기를 칸반으로 → 저장 → 실제로 칸반 3열 렌더. relation 대상 표 지정도 저장됨. `prd` 는 "기본 표는 지울 수 없습니다"._
 - [x] **3.2 "+ 표 추가"** — 좌측 목차 맨 아래 링크 → 모달. 템플릿 9개(이미 있으면 흐리게 "이미 있음") + **빈 표**(이름만 받고 바로 설정 모달을 연다).
-  _2026-09-06 확인: 템플릿 10줄 · 이미 있는 4개 표시 · 빈 표 생성 후 설정 모달 자동 오픈 · 표 삭제까지._
 - [x] **3.3 MCP 공통 툴** — `list_collections` · `search_items(query, collection?)` · `get_item(seq)` · `create_item(collection, props)` · `update_item(seq, props)`. 기존 13개 유지(총 18개). 서버 instructions 에 작업 처리 절차 추가.
-  _2026-09-06 확인(실제 MCP 호출): tools/list 18개 · 검색(없음) → 생성(seq 146, 할일) → 진행중으로 변경 → 재검색으로 발견 → 없는 표는 명확한 오류. DB 에 한글 정상 저장, `item_events` 에 "할일 → 진행중" 기록._
 - [x] **3.4 SKILL.md** — 데이터 구조를 3가지(트리·표·작업)로 다시 씀. `[[번호]]` 링크와 relation, **"정책·요구사항을 근거로 기능을 고치면 `[[번호]]` 로 근거를 남긴다"**, 작업 지시 처리 5단계, 안전 규칙(스키마 key 확인·표/속성 삭제는 화면에서), 하지 말 것 3줄 추가. frontmatter description 갱신.
 - [x] **3.5 프로젝트 키 편집 UI** — 프로젝트 목록의 `키 ○○` 버튼 → 모달. 소문자 입력도 대문자로 정규화.
-  _2026-09-06 확인: `P1` → `PLNT` 저장 · `1X` 는 거부 · **키를 바꿔도 예전 표기 `[[P1-1]]` 가 그대로 해석되고 새 키로 표시**됨(설계 D1 대로)._
 - [x] **3.6 문서** — README(표 설정·표 추가·키 변경 기능, MCP 툴 표에 5개 + 작업 처리 설명, API 표에 키 변경).
 
 ### 각 단계 끝의 공통 확인
@@ -325,21 +290,14 @@ CREATE TABLE IF NOT EXISTS item_events (
 
 ## 진행 상태
 
-> 작업하면서 여기를 갱신한다. 날짜 · 단계 · 무엇을 · 다음 할 일 · 막힌 것.
-
 | 날짜 | 단계 | 내용 |
 |---|---|---|
 | 2026-09-06 | — | 결정 D1~D14 확정. 이 문서 작성. 구현 시작 전. |
 | 2026-09-06 | 1.1 · 1.2 | 스키마·백필·템플릿 헬퍼(`COLLECTION_TEMPLATES`, `seed_collections`, `alloc_seq`, `project_key`) · `/resolve/{seq}` · `PUT /key` · 응답 `key`. ERD 갱신. 실제 DB 로 검증. 미커밋. |
-
 | 2026-09-06 | 1.3 · 1.4 · 1.5 | 컬렉션·행 API 11개(`validate_schema`/`validate_props`) · 노드 상세 `P1-14` · PRD 탭을 컬렉션 문서/표 렌더로 교체(`renderCollections`, `editItemProp` 등). API·브라우저·읽기 전용 모두 검증. 미커밋. |
-
 | 2026-09-06 | 1.6 ~ 1.10 | 작업 탭(표) · 내보내기 §9 · 버전 스냅샷/복원(컬렉션·행·노드 seq) · 용어/이미지 스캔 확장 · `migrate_prd_tables.py` 로 99행 이전(POL 20·NFR 15·DEC 23·AT 41). 전부 브라우저·API 검증. 미커밋. |
-
 | 2026-09-06 | 1.11 | README·ERD 갱신, Dockerfile COPY. **1단계 완료.** 미커밋 — 사용자에게 커밋 여부 확인 필요. |
-
 | 2026-09-06 | 2.1 ~ 2.9 | 링크 칩·relation 편집기·역참조·추적표·칸반·이력·행 코멘트·`?item=` 라우팅·문서. **2단계 완료.** 미커밋. |
-
 | 2026-09-06 | 3.1 ~ 3.6 | 스키마 편집 UI · 표 추가 · MCP 공통 툴 5개 · SKILL.md · 프로젝트 키 편집 · 문서. **3단계 완료 = 이 계획 전체 완료.** |
 | 2026-09-07 | 후속 | 이력: 정규화 비교 · 10분 안 연속 편집 합침 · 순변화 없으면 삭제 · 개별 삭제 API. 행/섹션 추가 버튼을 표 아래로, 추가 뒤 자동 스크롤 제거. DB: `pg_trgm` + `items_props_trgm_idx`, 군더더기 `(project_id)` 인덱스 제거, MCP `search_items`·`get_item` 을 SQL 한 번으로(전체 적재 → 인덱스 조회). |
 
@@ -374,9 +332,6 @@ CREATE TABLE IF NOT EXISTS item_events (
 
 ---
 
-## 다른 세션이 이어받을 때
+## 이어서 손댈 때
 
-1. 이 문서와 [ERD.md](ERD.md) 를 읽는다. `git log --oneline -5` 로 어디까지 커밋됐는지 본다.
-2. [진행 상태](#진행-상태)의 "다음 할 일"부터 한다. 체크리스트의 완료 조건으로 끝났는지 판단한다.
-3. DB 를 건드리면 같은 작업 안에서 ERD 를 갱신한다. 결정을 바꾸면 §3 에 이유와 함께 적는다.
-4. 끝나면 진행 상태 표에 한 줄 추가하고, 커밋은 사용자에게 묻는다.
+결정을 뒤집으면 §3 에 새 번호로, DB 를 바꾸면 같은 작업에서 [ERD.md](ERD.md) 갱신(CLAUDE.md), 큰 후속은 진행 상태에 한 줄.
