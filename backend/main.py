@@ -340,6 +340,15 @@ def init_db():
             -- 코멘트는 노드 또는 컬렉션 행 중 하나에 달린다 (API·UI 는 2단계 2.7)
             ALTER TABLE comments ALTER COLUMN node_id DROP NOT NULL;
             ALTER TABLE comments ADD COLUMN IF NOT EXISTS item_id int REFERENCES items(id) ON DELETE CASCADE;
+            -- 코멘트 완료(해결) 처리. resolved_at 이 NULL 이면 미해결
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS resolved_at timestamptz;
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS resolved_by int REFERENCES users(id) ON DELETE SET NULL;
+            CREATE INDEX IF NOT EXISTS comments_resolved_idx ON comments (resolved_at);
+            -- PRD 본문의 한 구간에 달린 코멘트 (PLAN D7: prd 컬렉션 섹션의 props.body)
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS anchor_prop text;
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS anchor_text text;
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS anchor_start int;
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at timestamptz;
             CREATE INDEX IF NOT EXISTS comments_item_id_idx ON comments (item_id);
             DO $$ BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_target_chk') THEN
@@ -1900,7 +1909,12 @@ class NodeUpdate(BaseModel):
 def list_nodes(pid: str, share: str | None = None, user: dict | None = Depends(opt_user)):
     with pool.connection() as conn, conn.cursor() as cur:
         pid = check_access(cur, pid, user, share)
-        cur.execute("SELECT * FROM nodes WHERE project_id = %s ORDER BY sort_order, id", (pid,))
+        # comments: 노드에 달린 미해결 코멘트 수. 트리·목록의 노란 점 표시에 쓴다
+        cur.execute("""SELECT n.*,
+                              (SELECT count(*) FROM comments c
+                                WHERE c.node_id = n.id AND c.resolved_at IS NULL) AS comments
+                         FROM nodes n WHERE n.project_id = %s
+                        ORDER BY n.sort_order, n.id""", (pid,))
         return rows_to_dicts(cur)
 
 
@@ -2384,6 +2398,10 @@ def get_image(img_id: str):
 # ---------- comments ----------
 class CommentIn(BaseModel):
     content: str
+    # 본문 구간 코멘트일 때만. anchor_start 는 원문 문자 위치(글이 바뀌면 anchor_text 로 다시 찾는다)
+    anchor_prop: str | None = None
+    anchor_text: str | None = None
+    anchor_start: int | None = None
 
 
 @app.get("/api/nodes/{node_id}/comments")
@@ -2392,8 +2410,10 @@ def list_comments(node_id: int, share: str | None = None,
     with pool.connection() as conn, conn.cursor() as cur:
         check_access(cur, node_project(cur, node_id), user, share)
         cur.execute("""SELECT c.id, c.node_id, c.user_id, u.display_name AS username,
-                              u.avatar, c.content, c.created_at
+                              u.avatar, c.content, c.created_at, c.updated_at,
+                              c.resolved_at, ru.display_name AS resolver
                        FROM comments c JOIN users u ON u.id = c.user_id
+                       LEFT JOIN users ru ON ru.id = c.resolved_by
                        WHERE c.node_id = %s ORDER BY c.created_at""", (node_id,))
         return rows_to_dicts(cur)
 
@@ -2418,8 +2438,11 @@ def list_item_comments(iid: int, share: str | None = None, user: dict | None = D
         item, c = load_item(cur, iid)
         check_access(cur, c["project_id"], user, share)
         cur.execute("""SELECT c.id, c.item_id, c.user_id, u.display_name AS username,
-                              u.avatar, c.content, c.created_at
+                              u.avatar, c.content, c.created_at, c.updated_at,
+                              c.resolved_at, ru.display_name AS resolver,
+                              c.anchor_prop, c.anchor_text, c.anchor_start
                        FROM comments c JOIN users u ON u.id = c.user_id
+                       LEFT JOIN users ru ON ru.id = c.resolved_by
                        WHERE c.item_id = %s ORDER BY c.created_at""", (iid,))
         return rows_to_dicts(cur)
 
@@ -2432,11 +2455,95 @@ def create_item_comment(iid: int, body: CommentIn, share: str | None = None,
     with pool.connection() as conn, conn.cursor() as cur:
         item, c = load_item(cur, iid)
         check_comment(cur, c["project_id"], user, share)
-        cur.execute("""INSERT INTO comments (item_id, user_id, content)
-                       VALUES (%s, %s, %s) RETURNING id, item_id, content, created_at""",
-                    (iid, user["id"], body.content.strip()))
+        cur.execute("""INSERT INTO comments (item_id, user_id, content,
+                                             anchor_prop, anchor_text, anchor_start)
+                       VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id, item_id, content, created_at,
+                              anchor_prop, anchor_text, anchor_start""",
+                    (iid, user["id"], body.content.strip(),
+                     body.anchor_prop, body.anchor_text, body.anchor_start))
         return {**rows_to_dicts(cur)[0], "user_id": user["id"],
                 "username": user["display_name"]}
+
+
+class ResolveIn(BaseModel):
+    resolved: bool = True
+
+
+def comment_project(cur, comment_id: int) -> int:
+    """코멘트가 달린 프로젝트. 노드 코멘트든 행 코멘트든 같은 방법으로 찾는다."""
+    cur.execute("""SELECT coalesce(n.project_id, i.project_id)
+                     FROM comments c
+                LEFT JOIN nodes n ON n.id = c.node_id
+                LEFT JOIN items i ON i.id = c.item_id
+                    WHERE c.id = %s""", (comment_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "코멘트를 찾을 수 없습니다")
+    return row[0]
+
+
+@app.put("/api/comments/{comment_id}/resolve")
+def resolve_comment(comment_id: int, body: ResolveIn, share: str | None = None,
+                    user: dict = Depends(current_user)):
+    """코멘트를 완료 처리하거나 되돌린다. 코멘트를 달 수 있는 사람이면 누구나."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        check_comment(cur, comment_project(cur, comment_id), user, share)
+        cur.execute("""UPDATE comments
+                          SET resolved_at = CASE WHEN %(on)s THEN now() END,
+                              resolved_by = CASE WHEN %(on)s THEN %(uid)s END
+                        WHERE id = %(id)s
+                    RETURNING resolved_at""",
+                    {"on": body.resolved, "uid": user["id"], "id": comment_id})
+        return {"id": comment_id, "resolved_at": cur.fetchone()[0]}
+
+
+@app.get("/api/projects/{pid}/comments")
+def list_project_comments(pid: str, resolved: int = 0, share: str | None = None,
+                          user: dict | None = Depends(opt_user)):
+    """프로젝트의 코멘트 모음. resolved=0 미해결(제안 시각 역순) · 1 완료(완료 시각 역순)."""
+    done = bool(resolved)
+    with pool.connection() as conn, conn.cursor() as cur:
+        pid = check_access(cur, pid, user, share)
+        # 조건·정렬은 done 하나로만 갈리므로 문자열을 끼워도 외부 입력이 섞이지 않는다
+        cur.execute("""
+            SELECT c.id, c.content, c.created_at, c.updated_at, c.resolved_at,
+                   c.node_id, c.item_id, c.user_id,
+                   c.anchor_prop, c.anchor_text, c.anchor_start,
+                   au.display_name AS author, au.avatar,
+                   ru.display_name AS resolver,
+                   n.title AS node_title, n.seq AS node_seq,
+                   i.seq AS item_seq, col.title AS item_coll
+              FROM comments c
+              JOIN users au ON au.id = c.user_id
+         LEFT JOIN users ru ON ru.id = c.resolved_by
+         LEFT JOIN nodes n ON n.id = c.node_id
+         LEFT JOIN items i ON i.id = c.item_id
+         LEFT JOIN collections col ON col.id = i.collection_id
+             WHERE coalesce(n.project_id, i.project_id) = %s
+               AND c.resolved_at IS """ + ("NOT NULL" if done else "NULL") + """
+             ORDER BY """ + ("c.resolved_at DESC" if done else "c.created_at DESC"), (pid,))
+        return rows_to_dicts(cur)
+
+
+class CommentEdit(BaseModel):
+    content: str
+
+
+@app.put("/api/comments/{comment_id}")
+def edit_comment(comment_id: int, body: CommentEdit, user: dict = Depends(current_user)):
+    """본인 코멘트 내용 수정. 앵커·완료 상태는 그대로 둔다."""
+    if not body.content.strip():
+        raise HTTPException(400, "내용을 입력하세요")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""UPDATE comments SET content = %s, updated_at = now()
+                        WHERE id = %s AND user_id = %s
+                    RETURNING content, updated_at""",
+                    (body.content.strip(), comment_id, user["id"]))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "본인 코멘트만 수정할 수 있습니다")
+        return {"id": comment_id, "content": row[0], "updated_at": row[1]}
 
 
 @app.delete("/api/comments/{comment_id}", status_code=204)

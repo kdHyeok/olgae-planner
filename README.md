@@ -20,6 +20,15 @@
 - **작업판(칸반)** — `tasks` 표는 상태(할일·진행중·완료)가 열. 카드를 끌어 상태 변경, 종류(`● 작업` · `◈ 에픽` · `! 이슈`)는
   맨 위 아이콘으로. **상위 작업**을 정하면 상대에 **하위 작업**으로 자동 반영, 서로 상위가 되는 고리는 막습니다.
   카드의 행 상세 = 내용 · **이력**(내용이 실제로 바뀐 저장만, 10분 안 되돌리면 사라짐, 하나씩 삭제 가능) · 코멘트.
+- **코멘트** — 기능명세서 항목과 표의 행에 코멘트를 달 수 있습니다.
+  미해결 코멘트가 있으면 트리·디렉토리 뷰의 항목 왼쪽 위에 **노란 점**이 뜨고 그 안에 개수가 보입니다
+  (접힌 항목에는 하위까지 합친 수). **완료 처리**하면 노란 점에서 빠지고 *완료된 코멘트* 로 옮겨집니다.
+  메뉴 → **코멘트** 에서 미해결(제안한 사람·시간·대상·내용)과 완료된 코멘트(남긴 사람·완료한 사람·완료 시각·대상·내용)를
+  모아 볼 수 있고, 대상을 누르면 그 항목으로 이동합니다. 내용은 **작성자 본인만** 고칠 수 있습니다.
+- **PRD 구간 코멘트** — PRD 본문에서 문구를 드래그해 **우클릭**하면 그 구간에 코멘트를 남깁니다.
+  구간에 밑줄과 노란 점(개수)이 붙고, 점을 누르면 오른쪽에 작은 팝업이 열리며 그 구간이 노랗게 강조됩니다.
+  같은 구간에 여러 사람이 남긴 코멘트는 팝업에 함께 보입니다. 완료하면 표식은 사라지고 보관함에 남습니다.
+  본문을 고쳐 위치가 밀려도 원문 조각으로 다시 찾아 붙습니다.
 - **버전 기록** — 헤더 저장 아이콘 한 번으로 PRD 섹션·모든 표·기능 트리를 스냅샷. 복원해도 id·번호가 유지되어 링크·코멘트가 안 깨집니다.
 - **내보내기** — 헤더 `⋯` → PRD 섹션 → 표 → 작업(상태별) → 기능명세서 순의 `<프로젝트명>.md` 한 파일.
   `[[P1-14]]` 와 관련 값은 문서 안 앵커 링크로.
@@ -132,10 +141,10 @@ docker compose up -d --build
 | GET | `/api/items/{iid}/events` | 행 변경 이력 (최근 20). 내용이 실제로 달라진 저장만, 같은 사람의 10분 안 연속 편집은 한 기록으로, 되돌아오면 기록 없음 |
 | DELETE | `/api/items/{iid}/events/{eid}` | 이력 하나 삭제 — 편집자 이상 |
 | GET | `/api/projects/{pid}/items` | 행 검색 `?q=&collection=` — 값 부분 일치(대소문자 무시) 또는 번호, 최대 200. `pg_trgm` 인덱스를 탄다 |
-| GET / POST | `/api/items/{iid}/comments` | 행 코멘트 목록 / 작성 (`{content}`) |
+| GET / POST | `/api/items/{iid}/comments` | 행 코멘트 목록 / 작성 (`{content}`, 구간 코멘트는 `anchor_prop·anchor_text·anchor_start` 추가) |
 | GET | `/api/projects/{pid}/resolve/{seq}` | 번호 → 기능 노드 또는 표 행 (`{kind, id, title, collection?, label}`) |
 | PUT | `/api/projects/{pid}/key` | 번호 앞부분 변경 (`{key}`, 대문자 2~5자) — 공동 소유자 이상 |
-| GET / POST | `/api/projects/{pid}/nodes` | 기능 노드 목록 / 생성 (`{parent_id, title}`) |
+| GET / POST | `/api/projects/{pid}/nodes` | 기능 노드 목록(노드별 코멘트 수 `comments` 포함) / 생성 (`{parent_id, title}`) |
 | PUT | `/api/nodes/{id}` | 부분 수정 (`title/description/status/importance/sort_order/parent_id`) — 순환 이동·타 프로젝트 이동은 400 |
 | DELETE | `/api/nodes/{id}` | 삭제 (하위 노드 연쇄 삭제) |
 | POST | `/api/projects/{pid}/images` | 이미지 업로드 (원본 바이트 + `Content-Type: image/*`, 5MB 이하) → `{url}` |
@@ -174,8 +183,11 @@ docker compose up -d --build
 | POST | `/api/admin/signups/{uid}/approve` | 승인 (`{role}`) — admin |
 | POST | `/api/admin/signups/{uid}/reject` | 거절(계정 삭제) — admin |
 | GET / PUT | `/api/admin/settings` | 가입 허용 여부 조회/변경 (`{signup_open}`) — admin |
-| GET | `/api/nodes/{id}/comments` | 노드 코멘트 목록 |
+| GET | `/api/nodes/{id}/comments` | 노드 코멘트 목록 (완료 정보 `resolved_at`·`resolver` 포함) |
 | POST | `/api/nodes/{id}/comments` | 코멘트 작성 (로그인 필요, `Authorization: Bearer <token>`) |
+| PUT | `/api/comments/{id}` | 코멘트 내용 수정 (`{content}`) — **작성자 본인만** |
+| PUT | `/api/comments/{id}/resolve` | 완료 처리 / 되돌리기 (`{resolved}`) — 코멘트 권한 이상 |
+| GET | `/api/projects/{pid}/comments` | 프로젝트 코멘트 모음 — `?resolved=0` 미해결(제안 시각 역순) · `1` 완료(완료 시각 역순) |
 | DELETE | `/api/comments/{id}` | 본인 코멘트 삭제 (로그인 필요) |
 
 ## MCP 서버 (배포 서버가 제공)

@@ -148,6 +148,12 @@ erDiagram
         int user_id FK "작성자"
         text content "내용"
         timestamptz created_at "작성 시각"
+        timestamptz updated_at "수정 시각 (작성자만 수정)"
+        timestamptz resolved_at "완료 시각 (NULL = 미해결)"
+        int resolved_by FK "완료 처리한 사람"
+        text anchor_prop "본문 구간 코멘트: 대상 속성"
+        text anchor_text "본문 구간 코멘트: 원문 조각"
+        int anchor_start "본문 구간 코멘트: 원문 문자 위치"
     }
     collections {
         serial id PK "컬렉션 ID"
@@ -221,6 +227,7 @@ erDiagram
 | 부모를 지우면 | 자식은 |
 |---|---|
 | `users` → `sessions`, `oauth_codes`, `oauth_tokens`, `projects`, `comments` | **함께 삭제** (CASCADE) |
+| `users` → `comments.resolved_by` | **NULL 로 바뀜** (SET NULL) — 완료 사실은 남고 완료자만 지워짐 |
 | `oauth_clients` → `oauth_requests`, `oauth_codes`, `oauth_tokens` | **함께 삭제** (CASCADE) |
 | `users` → `versions.user_id` | **NULL 로 바뀜** (SET NULL) — 기록은 `username` 으로 남음 |
 | `projects` → `nodes`, `versions`, `terms`, `term_categories`, `images`, `collections`, `items` | **함께 삭제** (CASCADE) |
@@ -441,7 +448,17 @@ MCP 툴의 `project_id` 모두 slug 를 씁니다. `find_project()` 가 slug 를
 | `item_id` | 대상 컬렉션 행 | int | FK → items(id) CASCADE | | 작업·정책 행에 달리는 코멘트. API·UI 는 2단계 |
 | `user_id` | 작성자 | int | FK → users(id) CASCADE, NN | | 본인만 삭제 가능 |
 | `content` | 내용 | text | NN | | |
-| `created_at` | 작성 시각 | timestamptz | NN | `now()` | |
+| `created_at` | 작성 시각 | timestamptz | NN | `now()` | 미해결 목록의 정렬 기준 |
+| `resolved_at` | 완료 시각 | timestamptz | | | **NULL 이면 미해결**. 트리·목록의 노란 점은 미해결만 셈. 완료 목록의 정렬 기준 |
+| `updated_at` | 수정 시각 | timestamptz | | | 내용을 고치면 채워짐. **작성자 본인만** 수정 가능 |
+| `resolved_by` | 완료 처리한 사람 | int | FK → users(id) SET NULL | | 코멘트 권한(`commenter` 이상)이면 누구나 완료·되돌리기 |
+| `anchor_prop` | 구간 코멘트: 대상 속성 | text | | | PRD 섹션 본문이면 `body`. NULL 이면 행 전체에 달린 코멘트 |
+| `anchor_text` | 구간 코멘트: 원문 조각 | text | | | 드래그로 고른 마크다운 원문. 위치가 밀리면 이 값으로 다시 찾는다 |
+| `anchor_start` | 구간 코멘트: 원문 위치 | int | | | 저장 당시의 문자 위치. 어긋나면 `anchor_text` 검색으로 대체 |
+
+PRD 본문 구간 코멘트는 **FK 없이 텍스트로 이어지는 관계**입니다 —
+`items.props.<anchor_prop>` 안에서 `anchor_text` 를 찾아 표식을 붙입니다.
+본문이 바뀌어 조각을 못 찾으면 표식만 사라지고 코멘트는 보관함에 남습니다.
 
 ### collections — 커스텀 표 (노션의 데이터베이스)
 
@@ -556,6 +573,7 @@ PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습�
 |---|---|
 | `nodes_project_id_idx`, `nodes_parent_id_idx` | 트리 조회 · 하위 연쇄 삭제 |
 | `comments_node_id_idx`, `comments_item_id_idx`, `comments_user_id_idx` | 항목·행별 코멘트 |
+| `comments_resolved_idx` | 미해결·완료 코멘트 분리 조회 |
 | `nodes_project_seq_idx`, `items_project_id_seq_key` UK, `collections_project_id_key_key` UK | `[[번호]]` 해석 · 번호로 행 찾기(MCP `get_item`) · 프로젝트별 표 |
 | `items_collection_idx` (collection_id, sort_order) | 컬렉션 안 행 목록 순서대로 · 새 행의 `max(sort_order)` |
 | `items_props_trgm_idx` GIN `(props::text) gin_trgm_ops` | 행 검색 `ILIKE '%q%'` (`GET /api/projects/{pid}/items`, MCP `search_items`) · 이미지 참조 정규식 스캔. **`pg_trgm` 확장** 필요 — 없으면 `init_db` 가 경고만 남기고 순차 스캔으로 동작 |
