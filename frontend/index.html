@@ -149,7 +149,15 @@
   .dir-list { width: 360px; border-right: 1px solid #e5e5e0; overflow: auto;
     padding: 46px 16px 0 0; }
   .dir-item .toggle { border: none; background: none; cursor: pointer; color: #999; padding: 0; font-size: 10px; }
-  .dir-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .dir-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px;
+    cursor: pointer; font-size: 14px; position: relative; }
+  /* 코멘트 수 표시. 접힌 노드에는 하위까지 합친 수가 뜬다 */
+  .cmtdot { position: absolute; top: -7px; left: -7px; min-width: 18px; height: 18px; padding: 0 5px;
+    background: #f0b429; color: #4a3708; border-radius: 9px; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; z-index: 2;
+    box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+  /* 디렉토리 목록은 왼쪽 여백이 없어 카드 안쪽에 붙인다 */
+  .dir-item .cmtdot { top: -4px; left: 0; }
   .dir-item:hover { background: #ececea; }
   .dir-item.selected { background: #e3e7f7; }
   .dir-item .num { min-width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
@@ -194,6 +202,25 @@
     border: 1px solid #d9d9d3; border-radius: 8px; padding: 10px 13px; font-size: 13px;
     line-height: 1.6; box-shadow: 0 8px 24px rgba(0,0,0,.14); }
   #termtip[hidden] { display: none; }
+  /* PRD 본문 구간 코멘트 (드래그 + 우클릭) */
+  .cmt-mark { position: relative; border-bottom: 2px solid #f0b429; cursor: pointer; }
+  .cmt-mark.on { background: #fff2c2; }
+  /* 본문 글자를 가리지 않게 작게, 조금 더 왼쪽 위로 */
+  .cmt-mark > .cmtdot { top: -12px; left: -11px; min-width: 15px; height: 15px;
+    padding: 0 4px; font-size: 10px; border-radius: 8px; }
+  #cmtpop { position: fixed; right: 18px; top: 74px; width: 332px; max-height: 74vh; overflow: auto;
+    background: #fff; border: 1px solid #e0e0db; border-radius: 10px; z-index: 150;
+    box-shadow: 0 10px 30px rgba(0,0,0,.16); padding: 13px 15px; }
+  #cmtpop[hidden] { display: none; }
+  #cmtpop .quote { font-size: 12px; color: #7a6420; background: #fff6d8; border-radius: 6px;
+    padding: 6px 8px; margin-bottom: 8px; max-height: 88px; overflow: auto; }
+  /* 코멘트 본문도 마크다운으로 (주소·`용어`·[[번호]] 포함) */
+  .cmt-md { font-size: 14px; margin-top: 2px; line-height: 1.65; word-break: break-word; }
+  .cmt-md p { margin: 3px 0; }
+  .cmt-md ul, .cmt-md ol { padding-left: 18px; margin: 3px 0; }
+  .cmt-md h1, .cmt-md h2, .cmt-md h3,
+  .cmt-md h4, .cmt-md h5, .cmt-md h6 { font-size: 14px; margin: 8px 0 3px; }
+  .cmt-md img { max-width: 100%; border-radius: 6px; }
   #termtip b.t { display: block; font-size: 12px; color: #46538a; margin-bottom: 4px; }
   .gtable { width: 100%; border-collapse: collapse; font-size: 13px; }
   .gtable th { text-align: left; font-size: 12px; color: #888; font-weight: 600;
@@ -369,6 +396,7 @@
 <div id="toast"></div>
 <div id="modal" hidden></div>
 <div id="termtip" hidden></div>
+<div id="cmtpop" hidden></div>
 <main>
   <div id="contentwrap">
     <div id="contentleft">
@@ -770,7 +798,37 @@ async function doLogout() {
 // nodes 를 받을 때 한 번만 인덱스를 만들어 두고 재사용한다 (예전엔 호출마다 전체 배열을 훑었다)
 let kidsMap = null, nodeMap = null;
 const NO_KIDS = [];
-function setNodes(list) { nodes = list; kidsMap = nodeMap = null; seqMap = null; }
+function setNodes(list) { nodes = list; kidsMap = nodeMap = null; seqMap = null; cmtSumMap = null; }
+
+// 노드별 (자기 + 하위 전체) 코멘트 수. 노드가 바뀌면 다시 만든다
+let cmtSumMap = null;
+function cmtSum(id) {
+  if (!cmtSumMap) {
+    cmtSumMap = new Map();
+    const walk = n => {
+      let total = n.comments || 0;
+      for (const k of childrenOf(n.id)) total += walk(k);
+      cmtSumMap.set(n.id, total);
+      return total;
+    };
+    childrenOf(null).forEach(walk);
+  }
+  return cmtSumMap.get(id) || 0;
+}
+// 접혀 있으면 하위까지 합쳐서, 펼쳐져 있으면 자기 것만 보여 준다
+function cmtBadge(n) {
+  const rolled = collapsed.has(n.id) && childrenOf(n.id).length > 0;
+  const cnt = rolled ? cmtSum(n.id) : (n.comments || 0);
+  if (!cnt) return '';
+  return `<span class="cmtdot" title="${rolled ? '하위 포함 코멘트' : '코멘트'} ${cnt}개">`
+    + (cnt > 99 ? '99+' : cnt) + '</span>';
+}
+// 코멘트를 쓰거나 지운 뒤, 노드에 적힌 수를 실제 목록 길이로 맞춘다
+function syncCmtCount(nodeId) {
+  const nd = nodeById(nodeId);
+  const open = (commentCache.get(nodeId) || []).filter(c => !c.resolved_at).length;
+  if (nd) { nd.comments = open; cmtSumMap = null; }   // 알림은 미해결만 센다
+}
 function buildIndex() {
   kidsMap = new Map(); nodeMap = new Map();
   for (const n of nodes) {
@@ -2114,6 +2172,7 @@ function render() {
   mEl.style.display = showMenu ? 'block' : 'none';
   mEl.innerHTML = showMenu ? `<button class="btn ibtn" onclick="event.stopPropagation();toggleMore()" title="메뉴" aria-label="메뉴"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     ${moreOpen ? `<div class="fmenu" style="left:auto;right:0;min-width:210px">
+      ${has ? `<div class="fitem act" onclick="openCmtBox()">코멘트<br><small>미해결 · 완료된 코멘트 모아 보기</small></div>` : ''}
       ${has && auth && canEdit() ? `<div class="fitem act" onclick="openVersions()">버전 기록<br><small>PRD · 기능명세서 저장 · 이전 시점으로 되돌리기</small></div>` : ''}
       ${has ? `<div class="fitem act" onclick="exportMarkdown()">마크다운으로 내보내기<br><small>PRD + 기능명세서 .md 파일</small></div>` : ''}
       ${auth && (!shareToken || canEdit()) ? `<div class="fitem act" onclick="openPluginGuide()">플러그인 설치<br><small>AI 에이전트로 이 프로젝트 읽고 고치기</small></div>` : ''}
@@ -2226,7 +2285,8 @@ function renderProjects(c) {
 }
 async function loadProjects() { projects = auth ? await api('/api/projects').catch(() => []) : []; }
 async function openProjectData() {
-  const [n] = await Promise.all([api(`/api/projects/${project.slug}/nodes`), loadCollections()]);
+  const [n] = await Promise.all([api(`/api/projects/${project.slug}/nodes`),
+                                 loadCollections(), loadPrdCmts()]);
   setNodes(n);
   collapsed = allParentIds();      // 처음에는 전부 접힌 상태로 연다
   await loadTerms();
@@ -2247,7 +2307,23 @@ function goProjects() {
   project = null; selectedId = null;
   admin.open = false;          // 관리자 화면에서 로고를 눌러도 목록으로 나가야 한다
   album.open = false; closeModal();
-  loadProjects().then(render);
+  // 홈으로 나갈 때는 새로고침한 것처럼 서버 상태를 다시 받는다.
+  // 남은 캐시도 비워 프로젝트에 다시 들어갈 때 새로 받게 한다
+  commentCache.clear(); panelStamp = '';
+  Promise.all([loadProjects(), refreshMe()]).then(render);
+}
+// 내 등급·용량·프로필을 다시 받는다. 실패해도 화면은 그대로 그린다
+async function refreshMe() {
+  if (!auth || shareToken) return;
+  try {
+    const m = await api('/api/me');
+    profile = m;
+    auth = { ...auth, id: m.id, login_id: m.login_id, display_name: m.display_name, role: m.role };
+    localStorage.setItem('auth', JSON.stringify(auth));
+    renderAuth();
+  } catch (e) {
+    if (String(e.message) === '401') { auth = null; localStorage.removeItem('auth'); renderAuth(); }
+  }
 }
 async function createProject() {
   const np = await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2413,6 +2489,7 @@ function renderTree(c) {
     const color = depth === 0 ? 'c' + (rootIdx % 7) : 'cchild';
     return `<div class="mm-branch">
       <span class="node-card ${color} ${n.id === selectedId ? 'selected' : ''}" data-id="${n.id}" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼치거나 접습니다" ${DND(n.id)} ${DROP(n.id)}>
+        ${cmtBadge(n)}
         ${GRIP}<span>${esc(n.title)}</span><span class="num">${num}</span>
         ${impSelect(n)}
         ${depth < MAX_DEPTH - 1 && canEdit() ? `<button class="addchild" title="하위 추가" onclick="event.stopPropagation();addNode(${n.id})">＋</button>` : ''}
@@ -2505,6 +2582,7 @@ function dirRowHTML({ n, num, depth }, i) {
   return `
       <div class="dir-item ${depth ? 'child' : ''} ${depth === 0 && i > 0 ? 'dir-top' : ''} ${n.id === selectedId ? 'selected' : ''}"
            data-id="${n.id}" style="margin-left:${depth * 22}px" onclick="select(${n.id})" title="더블클릭하면 하위를 모두 펼치거나 접습니다" ${DND(n.id)} ${DROP(n.id)}>
+        ${cmtBadge(n)}
         ${kids.length
           ? `<button class="toggle" title="${closed ? '펼치기' : '접기'}"
                onclick="event.stopPropagation();toggleCollapse(${n.id})">${closed ? '▶' : '▼'}</button>`
@@ -2665,19 +2743,336 @@ async function saveField(id, field, value) {
 
 const commentCache = new Map();          // 노드별 코멘트. 작성·삭제할 때만 비운다
 function commentsHTML(list, nodeId) {
+  const src = nodeId == null ? "'item'" : nodeId;   // 완료 처리 뒤 무엇을 다시 그릴지
   return list.length ? list.map(c => `
-    <div style="display:flex;gap:8px;border-bottom:1px solid #f0f0ec;padding:8px 0">
+    <div style="display:flex;gap:8px;border-bottom:1px solid #f0f0ec;padding:8px 0${c.resolved_at ? ';opacity:.5' : ''}">
       <span class="cmt-av">${avatarHTML(c.avatar, 26)}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;color:#888">
           <b style="color:#666">${esc(c.username)}</b> · ${new Date(c.created_at).toLocaleString()}
+          ${c.resolved_at ? `<span class="badge" style="background:#e4efe4;color:#3e7a3e">완료${c.resolver ? ' · ' + esc(c.resolver) : ''}</span>` : ''}
+          ${atLeast('commenter') ? `<button class="mv" style="font-size:12px"
+              title="${c.resolved_at ? '완료 되돌리기' : '완료 처리'}"
+              onclick="toggleResolve(${c.id},${c.resolved_at ? 'false' : 'true'},${src})">${c.resolved_at ? '↩' : '✓'}</button>` : ''}
+          ${c.updated_at ? '<span style="color:#bbb">(수정됨)</span>' : ''}
+          ${auth && auth.id === c.user_id
+            ? `<button class="mv" style="font-size:12px" title="수정" onclick="editCmtInline(${c.id},${src})">✎</button>` : ''}
           ${auth && auth.id === c.user_id
             ? `<button class="mv" style="font-size:12px" title="삭제" onclick="deleteComment(${c.id},${nodeId})">✕</button>` : ''}
         </div>
-        <div style="font-size:14px;margin-top:2px;white-space:pre-wrap">${esc(c.content)}</div>
+        <div id="cmt-body-${c.id}" class="cmt-md">${md(c.content)}</div>
       </div>
     </div>`).join('')
     : '<p style="color:#aaa;font-size:13px">아직 코멘트가 없습니다.</p>';
+}
+
+// ---------- PRD 본문 구간 코멘트 ----------
+// 구간은 (섹션 행 id, 속성, 원문 문자 위치, 원문 조각) 으로 잡는다.
+// 글이 바뀌어 위치가 밀리면 원문 조각을 다시 찾아 붙인다. 못 찾으면 표식만 사라지고
+// 코멘트는 보관함에 남는다.
+let prdCmts = [];        // 앵커가 있는 미해결 코멘트 (노란 점 표시용)
+let cmtPop = null;       // { key, itemId, prop, text, start, compose }
+
+const itemById = id => {
+  for (const list of collItems.values()) {
+    const f = list.find(x => x.id === id);
+    if (f) return f;
+  }
+  return null;
+};
+const itemBody = id => ((itemById(id) || {}).props || {}).body || '';
+
+async function loadPrdCmts() {
+  if (!project) { prdCmts = []; return; }
+  const all = await api(`/api/projects/${project.slug}/comments?resolved=0`).catch(() => []);
+  prdCmts = all.filter(c => c.item_id != null && c.anchor_text);
+}
+
+// 앵커 위치. 저장해 둔 위치가 어긋나면 원문 조각으로 다시 찾는다
+function anchorAt(src, c) {
+  const t = c.anchor_text || '';
+  if (!t) return -1;
+  if (c.anchor_start != null && src.substr(c.anchor_start, t.length) === t) return c.anchor_start;
+  return src.indexOf(t);
+}
+// 같은 구간에 달린 코멘트는 한 표식으로 묶는다. 구간이 겹치면 앞선 표식에 합친다
+function anchorGroups(itemId, prop, src) {
+  const gs = [];
+  prdCmts
+    .filter(c => c.item_id === itemId && (c.anchor_prop || 'body') === prop)
+    .map(c => ({ c, at: anchorAt(src, c) }))
+    .filter(x => x.at >= 0)
+    .sort((a, b) => a.at - b.at || b.c.anchor_text.length - a.c.anchor_text.length)
+    .forEach(({ c, at }) => {
+      const end = at + c.anchor_text.length, last = gs[gs.length - 1];
+      if (last && at < last.end) { last.list.push(c); last.end = Math.max(last.end, end); }
+      else gs.push({ key: itemId + '_' + at, start: at, end, list: [c] });
+    });
+  return gs;
+}
+
+// 마크다운 원문에 표식을 끼워 넣고 렌더한 뒤 태그로 바꾼다 (렌더러를 건드리지 않는 방법)
+const CMK = '\u0001';
+function bodyHTML(itemId, prop, src) {
+  const gs = anchorGroups(itemId, prop, src);
+  if (!gs.length) return md(src);
+  let out = src;
+  [...gs].reverse().forEach(g => {          // 뒤에서부터 끼워야 앞쪽 위치가 안 밀린다
+    out = out.slice(0, g.end) + CMK + 'E' + CMK + out.slice(g.end);
+    out = out.slice(0, g.start) + CMK + 'S' + g.key + CMK + out.slice(g.start);
+  });
+  const cnt = k => (gs.find(g => g.key === k) || { list: [] }).list.length;
+  return md(out)
+    .replace(new RegExp(CMK + 'S([0-9_]+)' + CMK, 'g'), (_, k) =>
+      `<span class="cmt-mark" data-k="${k}" onclick="openCmtPop(event,'${k}')">`
+      + `<span class="cmtdot" title="코멘트 ${cnt(k)}개">${cnt(k)}</span>`)
+    .replace(new RegExp(CMK + 'E' + CMK, 'g'), '</span>');
+}
+
+// 선택 구간을 원문에서 찾는다. 같은 문구가 여럿이면 화면 위치에 가장 가까운 것
+function nearestIndex(src, text, approx) {
+  let best = -1, dist = Infinity;
+  for (let i = src.indexOf(text); i >= 0; i = src.indexOf(text, i + 1)) {
+    const d = Math.abs(i - approx);
+    if (d < dist) { dist = d; best = i; }
+  }
+  return best;
+}
+
+// 우클릭: 선택한 구간에 코멘트를 남긴다. 선택이 없으면 브라우저 기본 메뉴를 그대로 둔다
+function prdComment(e, itemId) {
+  const el = e.currentTarget, sel = getSelection();
+  if (!sel || !sel.rangeCount || !sel.toString().trim()) return;
+  const r = sel.getRangeAt(0);
+  if (!el.contains(r.commonAncestorContainer)) return;
+  e.preventDefault();
+  if (!auth) return toast('로그인하면 코멘트를 남길 수 있습니다.');
+  if (!atLeast('commenter')) return toast('이 프로젝트에 코멘트할 권한이 없습니다.');
+  const pre = document.createRange();
+  pre.selectNodeContents(el); pre.setEnd(r.startContainer, r.startOffset);
+  const text = sel.toString().trim();
+  const at = nearestIndex(itemBody(itemId), text, pre.toString().length);
+  if (at < 0) return toast('선택한 구간을 본문에서 찾지 못했습니다. 조금 다르게 선택해 보세요.');
+  cmtPop = { key: itemId + '_' + at, itemId, prop: 'body', text, start: at, compose: true };
+  paintCmtPop();
+  setTimeout(() => document.getElementById('pop-in')?.focus(), 30);
+}
+
+function openCmtPop(e, key) {
+  e.stopPropagation();
+  const itemId = +key.split('_')[0], src = itemBody(itemId);
+  const g = anchorGroups(itemId, 'body', src).find(x => x.key === key);
+  if (!g) return;
+  cmtPop = { key, itemId, prop: 'body', text: src.slice(g.start, g.end), start: g.start, compose: false };
+  paintCmtPop();
+}
+function closeCmtPop() { cmtPop = null; paintCmtPop(); }
+// 팝업 밖을 누르면 닫는다. 표식 클릭은 openCmtPop 에서 전파를 멈춘다
+document.addEventListener('mousedown', e => {
+  if (!cmtPop) return;
+  if (e.target.closest('#cmtpop') || e.target.closest('.cmt-mark')) return;
+  closeCmtPop();
+});
+
+function paintCmtPop() {
+  const el = document.getElementById('cmtpop');
+  if (!el) return;
+  document.querySelectorAll('.cmt-mark.on').forEach(x => x.classList.remove('on'));
+  if (!cmtPop || tab !== 'prd' || !project) { el.hidden = true; return; }
+  const g = anchorGroups(cmtPop.itemId, cmtPop.prop, itemBody(cmtPop.itemId))
+    .find(x => x.key === cmtPop.key);
+  if (!g && !cmtPop.compose) { cmtPop = null; el.hidden = true; return; }   // 전부 완료됨
+  // 여러 사람이 남긴 코멘트는 쓴 순서대로 읽히게 한다
+  const list = (g ? g.list : []).slice().sort((a, b) => a.created_at < b.created_at ? -1 : 1);
+  document.querySelectorAll(`.cmt-mark[data-k="${cmtPop.key}"]`).forEach(x => x.classList.add('on'));
+  const row = c => `<div style="border-top:1px solid #f0f0ec;padding:8px 0">
+      <div style="font-size:12px;color:#888;display:flex;align-items:center;gap:4px">
+        <b style="color:#666">${esc(c.author || '')}</b>
+        <span>${new Date(c.created_at).toLocaleString()}</span>
+        ${c.updated_at ? '<span style="color:#bbb">(수정됨)</span>' : ''}
+        <span style="flex:1"></span>
+        ${auth && auth.id === c.user_id ? `<button class="mv" title="수정" onclick="editPopCmt(${c.id})">✎</button>` : ''}
+        ${atLeast('commenter') ? `<button class="mv" title="완료 처리" onclick="toggleResolve(${c.id},true,'prd')">✓</button>` : ''}
+        ${auth && auth.id === c.user_id ? `<button class="mv danger" title="삭제" onclick="delPopCmt(${c.id})">✕</button>` : ''}
+      </div>
+      <div id="pop-c-${c.id}" class="cmt-md">${md(c.content)}</div>
+    </div>`;
+  el.hidden = false;
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <b style="font-size:14px;flex:1">코멘트${list.length ? ' ' + list.length + '개' : ''}</b>
+      <button class="mv" title="닫기" onclick="closeCmtPop()">✕</button></div>
+    <div class="quote">“${esc(cmtPop.text)}”</div>
+    ${list.map(row).join('')}
+    ${atLeast('commenter') ? `<textarea id="pop-in" class="inline-edit" style="min-height:62px;margin-top:8px"
+        placeholder="이 구간에 남길 코멘트"></textarea>
+      <div class="btnrow" style="margin-top:8px">
+        <button class="btn primary" onclick="submitPopCmt()">등록</button></div>`
+      : (list.length ? '' : '<p class="hint" style="margin:0">코멘트가 없습니다.</p>')}`;
+}
+
+async function submitPopCmt() {
+  const ta = document.getElementById('pop-in');
+  if (!ta || !ta.value.trim()) return;
+  try {
+    await api(`/api/items/${cmtPop.itemId}/comments`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: ta.value, anchor_prop: cmtPop.prop,
+                             anchor_text: cmtPop.text, anchor_start: cmtPop.start }) });
+  } catch (e) { return toast(e.detail || '코멘트를 남기지 못했습니다'); }
+  await loadPrdCmts();
+  cmtPop.compose = false;
+  render(); paintCmtPop();
+  toast('코멘트를 남겼습니다.');
+}
+
+const editComment = (id, content) => api('/api/comments/' + id, { method: 'PUT',
+  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+
+// 작성자만 그 자리에서 수정
+function editPopCmt(id) {
+  const box = document.getElementById('pop-c-' + id);
+  if (!box || box.dataset.edit) return;
+  box.dataset.edit = '1';
+  // 화면은 마크다운으로 그려져 있으니 원문은 목록에서 가져온다
+  const old = (prdCmts.find(x => x.id === id) || {}).content || '';
+  box.innerHTML = `<textarea class="inline-edit" style="min-height:58px">${esc(old)}</textarea>
+    <div class="btnrow" style="margin-top:6px">
+      <button class="btn primary" onclick="savePopCmt(${id})">저장</button>
+      <button class="btn" onclick="paintCmtPop()">취소</button></div>`;
+  box.querySelector('textarea').focus();
+}
+async function savePopCmt(id) {
+  const ta = document.querySelector('#pop-c-' + id + ' textarea');
+  if (!ta) return;
+  try { await editComment(id, ta.value); } catch (e) { return toast(e.detail || '수정하지 못했습니다'); }
+  await loadPrdCmts(); paintCmtPop(); toast('코멘트를 수정했습니다.');
+}
+async function delPopCmt(id) {
+  try { await api('/api/comments/' + id, { method: 'DELETE' }); }
+  catch (e) { return toast(e.detail || '삭제하지 못했습니다'); }
+  await loadPrdCmts(); render(); paintCmtPop();
+}
+
+// 노드·행 코멘트 목록에서의 그 자리 수정
+function editCmtInline(id, src) {
+  const box = document.getElementById('cmt-body-' + id);
+  if (!box || box.dataset.edit) return;
+  box.dataset.edit = '1';
+  // 화면은 마크다운으로 그려져 있으니 원문은 목록에서 가져온다
+  const list = typeof src === 'number' ? (commentCache.get(src) || []) : (itemView.comments || []);
+  const old = (list.find(c => c.id === id) || {}).content || '';
+  const arg = typeof src === 'number' ? src : `'${src}'`;
+  box.innerHTML = `<textarea class="inline-edit" style="min-height:58px">${esc(old)}</textarea>
+    <div class="btnrow" style="margin-top:6px">
+      <button class="btn primary" onclick="saveCmtInline(${id},${arg})">저장</button>
+      <button class="btn" onclick="refreshCmtSrc(${arg})">취소</button></div>`;
+  box.querySelector('textarea').focus();
+}
+async function saveCmtInline(id, src) {
+  const ta = document.querySelector('#cmt-body-' + id + ' textarea');
+  if (!ta) return;
+  try { await editComment(id, ta.value); } catch (e) { return toast(e.detail || '수정하지 못했습니다'); }
+  await refreshCmtSrc(src); toast('코멘트를 수정했습니다.');
+}
+async function refreshCmtSrc(src) {
+  if (typeof src === 'number') {
+    commentCache.delete(src); await loadComments(src);
+    const el = document.getElementById('cmts');
+    if (el) el.innerHTML = commentsHTML(commentCache.get(src) || [], src);
+  } else {
+    itemView.comments = await api(`/api/items/${itemView.iid}/comments`).catch(() => []);
+    paintModal();
+  }
+}
+
+// 보관함에서 PRD 코멘트를 누르면 그 구간으로 가서 팝업을 연다
+function gotoPrdCmt(itemId, cid) {
+  closeModal();
+  tab = 'prd';
+  const c = prdCmts.find(x => x.id === cid);
+  const at = c ? anchorAt(itemBody(itemId), c) : -1;
+  cmtPop = at >= 0
+    ? { key: itemId + '_' + at, itemId, prop: 'body', text: c.anchor_text, start: at, compose: false }
+    : null;
+  render(); paintCmtPop();
+  if (!cmtPop) toast('본문이 바뀌어 그 구간을 찾지 못했습니다.');
+  else setTimeout(() => document.querySelector(`.cmt-mark[data-k="${cmtPop.key}"]`)
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+}
+
+// ---------- 코멘트 보관함 (미해결 · 완료된 코멘트) ----------
+let cmtBox = { tab: 'open', rows: [] };
+
+// src: 노드 id · 'item'(행 상세 모달) · 'box'(보관함) — 완료 처리 뒤 그 화면만 다시 그린다
+async function toggleResolve(id, on, src) {
+  try {
+    await api(`/api/comments/${id}/resolve`, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolved: on }) });
+  } catch (e) { return toast(e.detail || '처리하지 못했습니다'); }
+  if (typeof src === 'number') {
+    commentCache.delete(src); await loadComments(src); syncCmtCount(src); render();
+  } else if (src === 'item') {
+    itemView.comments = await api(`/api/items/${itemView.iid}/comments`).catch(() => []);
+    await loadPrdCmts(); paintModal();
+  } else if (src === 'prd') {
+    await loadPrdCmts(); render(); paintCmtPop();
+  } else {
+    commentCache.clear(); setNodes(await reloadNodes());   // 노란 점을 서버 기준으로 맞춘다
+    await loadPrdCmts();
+    render(); await loadCmtBox();                          // 모달 뒤 트리도 함께 갱신
+  }
+  toast(on ? '코멘트를 완료 처리했습니다.' : '완료를 되돌렸습니다.');
+}
+
+async function openCmtBox(tab) {
+  moreOpen = false; render();
+  cmtBox = { tab: tab || 'open', rows: [] };
+  showModal(cmtBoxHTML);
+  await loadCmtBox();
+}
+async function loadCmtBox() {
+  const q = cmtBox.tab === 'done' ? 1 : 0;
+  cmtBox.rows = await api(`/api/projects/${project.slug}/comments?resolved=${q}`).catch(() => []);
+  paintModal();
+}
+function setCmtTab(t) { cmtBox.tab = t; cmtBox.rows = []; paintModal(); loadCmtBox(); }
+
+function cmtBoxHTML() {
+  const done = cmtBox.tab === 'done';
+  const tabBtn = (id, label) => `<button class="btn ${cmtBox.tab === id ? 'primary' : ''}"
+    style="padding:5px 14px;font-size:13px" onclick="setCmtTab('${id}')">${label}</button>`;
+  // 코멘트가 달린 대상. 기능명세서 항목이면 트리로 이동, 표의 행이면 행 상세를 연다
+  const target = r => r.node_id != null
+    ? `<a href="#" onclick="gotoNode(${r.node_id});return false">${esc(seqLabel(r.node_seq))} · ${esc(r.node_title || '')}</a>`
+    : (r.item_id != null
+        ? `<a href="#" onclick="${r.anchor_text ? `gotoPrdCmt(${r.item_id},${r.id})` : `openItem(${r.item_id})`};return false">${esc(seqLabel(r.item_seq))} · ${esc(r.item_coll || '')}</a>`
+          + (r.anchor_text ? `<div style="font-size:11px;color:#a08b3a;margin-top:2px">“${esc(r.anchor_text.slice(0, 70))}”</div>` : '')
+        : '<span style="color:#bbb">—</span>');
+  const when = t => t ? new Date(t).toLocaleString() : '—';
+  const row = r => `<tr>
+    ${done ? `<td style="white-space:nowrap">${esc(r.author)}</td>
+      <td style="white-space:nowrap"><b>${esc(r.resolver || '—')}</b><br>
+        <small style="color:#aaa">${when(r.resolved_at)}</small></td>`
+      : `<td style="white-space:nowrap"><b>${esc(r.author)}</b><br>
+        <small style="color:#aaa">${when(r.created_at)}</small></td>`}
+    <td>${target(r)}</td>
+    <td><div class="cmt-md">${md(r.content)}</div>
+      ${atLeast('commenter') ? `<button class="btn goto" style="margin-top:6px"
+        onclick="toggleResolve(${r.id},${done ? 'false' : 'true'},'box')">${done ? '되돌리기' : '완료 처리'}</button>` : ''}
+    </td></tr>`;
+  return `<h3 style="margin-bottom:4px">코멘트</h3>
+    <p class="hint" style="margin:0 0 12px">완료 처리한 코멘트는 <b>완료된 코멘트</b> 로 옮겨지고,
+      기능명세서의 노란 점에서도 빠집니다.</p>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      ${tabBtn('open', '미해결')}${tabBtn('done', '완료된 코멘트')}</div>
+    ${cmtBox.rows.length ? `<div style="overflow:auto;max-height:56vh"><table class="gtable">
+      <thead><tr>
+        ${done ? '<th style="width:110px">남긴 사람</th><th style="width:150px">완료한 사람</th>'
+               : '<th style="width:150px">제안한 사람</th>'}
+        <th style="width:230px">기능명세서</th><th>내용</th></tr></thead>
+      <tbody>${cmtBox.rows.map(row).join('')}</tbody></table></div>`
+      : `<p style="color:#aaa;padding:18px 0">${done ? '완료된 코멘트가 없습니다.' : '미해결 코멘트가 없습니다.'}</p>`}
+    <div class="btnrow"><button class="btn" onclick="closeModal()">닫기</button></div>`;
 }
 async function loadComments(nodeId) {
   if (commentCache.has(nodeId)) return;   // 이미 화면에 그려져 있다 (detailBody 가 캐시로 렌더)
@@ -2694,15 +3089,13 @@ async function addComment(nodeId) {
     await api(`/api/nodes/${nodeId}/comments`, { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: input.value }) });
     input.value = ''; commentCache.delete(nodeId); await loadComments(nodeId);
-    const el = document.getElementById('cmts');
-    if (el) el.innerHTML = commentsHTML(commentCache.get(nodeId) || [], nodeId);
+    syncCmtCount(nodeId); render();          // 노란 점 수까지 함께 갱신
   } catch (e) { toast(e.detail || '로그인이 필요합니다'); }
 }
 async function deleteComment(id, nodeId) {
   await api('/api/comments/' + id, { method: 'DELETE' }).catch(e => toast(e.detail || '삭제 실패'));
   commentCache.delete(nodeId); await loadComments(nodeId);
-  const el = document.getElementById('cmts');
-  if (el) el.innerHTML = commentsHTML(commentCache.get(nodeId) || [], nodeId);
+  syncCmtCount(nodeId); render();
 }
 
 let prdCaret = null;   // 편집 화면에서 커서를 놓을 위치
@@ -3045,6 +3438,7 @@ const rowTools = (it, i, n) => canEdit() ? `
     onclick="twoStep('item:${it.id}', () => deleteItem(${it.id}))">${askLabel('item:' + it.id, backrefs(it.seq).length ? '✕' + backrefs(it.seq).length : '✕')}</button>` : '';
 
 function documentHTML(items) {
+  queueMicrotask(paintCmtPop);      // 새로 그린 표식에 강조를 다시 입힌다
   if (!items.length) return '<p class="hint" style="padding:8px 0">섹션이 없습니다.</p>';
   return items.map((it, i) => {
     const p = it.props || {}, body = p.body || '';
@@ -3053,7 +3447,9 @@ function documentHTML(items) {
         <h1 class="sec-title" ondblclick="editItemProp(event,this,${it.id},'title')" title="더블클릭하여 제목 수정">${esc(p.title || '(제목 없음)')}</h1>
         <span class="sec-tools">${seqChip(it.seq)}${rowTools(it, i, items.length)}</span>
       </div>
-      <div class="sec-body md-cell" ondblclick="editItemProp(event,this,${it.id},'body')" title="더블클릭하여 수정">${body.trim() ? md(body) : '<span class="hint">더블클릭하여 작성</span>'}</div>
+      <div class="sec-body md-cell" ondblclick="editItemProp(event,this,${it.id},'body')"
+           oncontextmenu="prdComment(event,${it.id})"
+           title="더블클릭하여 수정 · 구간을 드래그하고 우클릭하면 코멘트">${body.trim() ? bodyHTML(it.id, 'body', body) : '<span class="hint">더블클릭하여 작성</span>'}</div>
       ${backrefsHTML(it.seq)}
     </article>`;
   }).join('');
@@ -3535,7 +3931,7 @@ async function moveItem(iid, dir) {
 }
 
 // ---------- actions ----------
-function setTab(t) { tab = t; render(); }
+function setTab(t) { if (t !== 'prd') cmtPop = null; tab = t; render(); paintCmtPop(); }
 function setView(v) { view = v; render(); }
 let lastCardClick = { id: 0, at: 0 };
 function select(id) {
