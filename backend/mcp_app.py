@@ -95,7 +95,7 @@ class OAuthProvider:
             row = cur.fetchone()
         return {"client_name": row[0]} if row else None
 
-    async def complete_authorization(self, request_id: str, user_id: int) -> str | None:
+    def complete_authorization_sync(self, request_id: str, user_id: int) -> str | None:
         code = secrets.token_urlsafe(32)
         with main.pool.connection() as conn, conn.cursor() as cur:
             cur.execute("""DELETE FROM oauth_requests WHERE request_hash = %s AND expires_at > now()
@@ -115,6 +115,9 @@ class OAuthProvider:
         if row[1] is not None:
             values["state"] = row[1]
         return construct_redirect_uri(row[4], **values)
+
+    async def complete_authorization(self, request_id: str, user_id: int) -> str | None:
+        return self.complete_authorization_sync(request_id, user_id)
 
     async def load_authorization_code(self, client: OAuthClientInformationFull,
                                       authorization_code: str) -> AuthorizationCode | None:
@@ -227,7 +230,8 @@ def _user(ctx: Context) -> dict:
     """MCP 요청 헤더의 API/OAuth 토큰으로 사용자를 판별한다."""
     headers = ctx.headers or {}
     auth = headers.get("authorization") or headers.get("Authorization")
-    user = main.opt_user(authorization=auth)
+    token = auth[7:] if auth and auth.startswith("Bearer ") else ""
+    user = main.lookup_token_user(token) if token else None
     if not user:
         raise ToolError(
             "인증 실패: OAuth 연결 또는 유효한 API 토큰이 필요합니다.")

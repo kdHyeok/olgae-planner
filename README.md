@@ -207,7 +207,7 @@ docker compose up -d --build
 ### ChatGPT 연결
 
 1. 새 플러그인의 서버 URL 에 `<PUBLIC_URL>/mcp` 입력, 인증은 **OAuth**.
-2. 처음 툴을 쓸 때 열리는 화면에서 아이디·비밀번호로 로그인하고 승인.
+2. 처음 툴을 쓸 때 열리는 화면에서 Google 또는 아이디·비밀번호로 로그인하고 승인.
 
 DCR 로 공개 클라이언트가 등록되고, access 1시간 · refresh 30일(갱신 때 둘 다 회전), DB 에는 해시만 저장.
 discovery 는 `/.well-known/oauth-protected-resource/mcp` · `/.well-known/oauth-authorization-server`.

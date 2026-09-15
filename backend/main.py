@@ -1002,6 +1002,13 @@ def with_google_result(return_to: str, result: str) -> str:
     return urlunsplit(("", "", parsed.path or "/", urlencode(query), parsed.fragment))
 
 
+def plugin_request_id(return_to: str) -> str:
+    parsed = urlsplit(return_to)
+    if parsed.path != "/oauth/google/finish":
+        return ""
+    return dict(parse_qsl(parsed.query)).get("request_id", "")[:300]
+
+
 def create_google_request(mode: str, user_id: int | None, return_to: str,
                           redirect_uri: str) -> str:
     state = secrets.token_urlsafe(32)
@@ -1170,6 +1177,14 @@ def google_callback(request: Request, state: str = "", code: str = "", error: st
 
     if result["status"] == "pending":
         return RedirectResponse(with_google_result(flow["return_to"], "pending"), status_code=303)
+    oauth_request_id = plugin_request_id(flow["return_to"])
+    if result["status"] == "authenticated" and oauth_request_id:
+        redirect_url = mcp_app.provider.complete_authorization_sync(
+            oauth_request_id, result["user"]["id"])
+        if not redirect_url:
+            return oauth_login_page("", "", "승인 요청이 만료되었습니다. 연결을 다시 시작하세요.", 410)
+        return RedirectResponse(redirect_url, status_code=303,
+                                headers={"Cache-Control": "no-store"})
     target = RedirectResponse(with_google_result(flow["return_to"], result["status"]),
                               status_code=303)
     if result["status"] == "authenticated":
@@ -2884,11 +2899,15 @@ main{{max-width:420px;margin:10vh auto;padding:28px;background:white;border:1px 
 h1{{font-size:24px;margin:0 0 10px}} p{{line-height:1.55;color:#666}}
 label{{display:block;margin:16px 0 6px;font-weight:650}} input{{box-sizing:border-box;width:100%;padding:12px;border:1px solid #bbb;border-radius:9px;font-size:16px}}
 button{{width:100%;margin-top:22px;padding:12px;border:0;border-radius:9px;background:#242424;color:white;font-size:16px;font-weight:700;cursor:pointer}}
-.client{{color:#202124;font-weight:700}} .error{{padding:10px;border-radius:8px;background:#fff0ef;color:#b42318}}
+.google{{margin-top:16px;background:white;color:#202124;border:1px solid #bbb}} .or{{display:flex;align-items:center;gap:10px;margin:18px 0;color:#888}}
+.or::before,.or::after{{content:"";height:1px;background:#ddd;flex:1}} .client{{color:#202124;font-weight:700}} .error{{padding:10px;border-radius:8px;background:#fff0ef;color:#b42318}}
 small{{display:block;margin-top:14px;color:#777;line-height:1.45}}
 </style></head><body><main><h1>얼개 플래너 연결</h1>
 <p><span class="client">{safe_client}</span>에서 내 프로젝트를 읽고 편집하도록 승인합니다.</p>
-{error_html}<form method="post" action="/oauth/login">
+{error_html}<form method="get" action="/oauth/google/start">
+<input type="hidden" name="request_id" value="{safe_request}">
+<button class="google" type="submit">Google로 계속하기</button></form>
+<div class="or">또는</div><form method="post" action="/oauth/login">
 <input type="hidden" name="request_id" value="{safe_request}">
 <label for="login_id">아이디</label><input id="login_id" name="login_id" autocomplete="username" required maxlength="200">
 <label for="password">비밀번호</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1000">
@@ -2908,6 +2927,36 @@ async def oauth_login_form(request: str):
     if not pending:
         return oauth_login_page("", "", "승인 요청이 만료되었거나 올바르지 않습니다.", 410)
     return oauth_login_page(request, pending["client_name"])
+
+
+@app.get("/oauth/google/start")
+async def oauth_google_start(http_request: Request, request_id: str = ""):
+    pending = await mcp_app.provider.pending_info(request_id)
+    if not pending:
+        return oauth_login_page("", "", "승인 요청이 만료되었거나 올바르지 않습니다.", 410)
+    try:
+        google_configured()
+        return_to = "/oauth/google/finish?" + urlencode({"request_id": request_id})
+        target = create_google_request("login", None, return_to,
+                                       google_redirect_uri(http_request))
+    except HTTPException as exc:
+        return oauth_login_page(request_id, pending["client_name"], str(exc.detail), exc.status_code)
+    return RedirectResponse(target, status_code=302, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/oauth/google/finish")
+async def oauth_google_finish(request_id: str = "", google: str = ""):
+    pending = await mcp_app.provider.pending_info(request_id)
+    if not pending:
+        return oauth_login_page("", "", "승인 요청이 만료되었거나 올바르지 않습니다.", 410)
+    errors = {
+        "pending": "Google 가입이 접수되었습니다. 관리자 승인 후 다시 연결하세요.",
+        "link-required": "기존 계정의 프로필에서 Google 계정을 먼저 연결하세요.",
+        "signup-closed": "현재 신규 가입이 닫혀 있습니다.",
+        "cancelled": "Google 로그인이 취소되었습니다.",
+    }
+    return oauth_login_page(request_id, pending["client_name"],
+                            errors.get(google, "Google 로그인에 실패했습니다."), 400)
 
 
 @app.post("/oauth/login")

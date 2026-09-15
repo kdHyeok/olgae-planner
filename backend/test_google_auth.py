@@ -61,6 +61,16 @@ def run():
         assert flow and flow["mode"] == "link" and flow["user_id"] == linked_uid
         assert main.consume_google_request(query["state"][0]) is None
 
+        plugin_url = main.create_google_request(
+            "login", None, "/oauth/google/finish?request_id=test-request",
+            main.google_redirect_uri(local_request))
+        plugin_query = parse_qs(urlsplit(plugin_url).query)
+        plugin_flow = main.consume_google_request(plugin_query["state"][0])
+        assert plugin_flow["mode"] == "login" and plugin_flow["user_id"] is None
+        assert plugin_flow["return_to"] == "/oauth/google/finish?request_id=test-request"
+        assert main.plugin_request_id(plugin_flow["return_to"]) == "test-request"
+        assert main.plugin_request_id("/oauth/google/finish?google=authenticated") == ""
+
         result = main.apply_google_identity(flow, {
             "sub": linked_sub, "email": linked_login, "name": "연결된 이름"
         })
