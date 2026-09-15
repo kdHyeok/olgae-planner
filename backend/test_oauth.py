@@ -113,7 +113,10 @@ def run():
         request_id = parse_qs(urlsplit(login_path).query)["request"][0]
         login_page = fetch(login_path)
         assert login_page.status == 200
+        login_html = login_page.read().decode()
         assert "form-action 'self' https://chatgpt.com" in login_page.headers["Content-Security-Policy"]
+        assert "Google로 계속하기" in login_html
+        assert f'name="request_id" value="{request_id}"' in login_html
         callback = form("/oauth/login", {
             "request_id": request_id, "login_id": login_id, "password": password,
         }, redirect=False)
@@ -151,6 +154,19 @@ def run():
         })
         tools_body = tools_list.read()
         assert tools_list.status == 200 and b"securitySchemes" in tools_body and b"oauth2" in tools_body
+
+        projects_call = fetch("/mcp", data=json.dumps({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "list_projects", "arguments": {}},
+        }).encode(), headers={
+            "Authorization": "Bearer " + tokens["access_token"],
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+            "Host": "localhost:3000",
+        })
+        projects_body = projects_call.read()
+        assert projects_call.status == 200, projects_body
+        assert b'"isError":true' not in projects_body, projects_body
+        assert b'"content"' in projects_body, projects_body
 
         refreshed_response = form("/token", {
             "grant_type": "refresh_token", "client_id": client_id,
