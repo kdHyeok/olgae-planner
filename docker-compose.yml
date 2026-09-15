@@ -23,6 +23,9 @@ services:
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS-localhost:3000,127.0.0.1:3000}
       # OAuth issuer/resource 로 쓰는 외부 HTTPS 주소. 배포한다면 .env 에 실제 도메인을 넣는다.
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+      # Google 로그인. 비밀값은 저장소가 아닌 .env 에만 둔다.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     depends_on:
       db:
         condition: service_healthy

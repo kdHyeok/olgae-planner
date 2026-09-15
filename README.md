@@ -38,7 +38,8 @@
   사용처로 이동, 카테고리 분류.
 - **마크다운** — 제목 `#`~`######` · `**굵게**` `*기울임*` · 불릿/번호/중첩 목록 · 표(정렬 지정 가능) · 인용 `>` ·
   코드 블록 · `---` · 링크(주소만 써도 자동, 새 탭, `javascript:`·`data:` 차단) · 이미지.
-- **사용자** — 로그인 ID + 표시 이름 + 8자 이상 비밀번호. **가입 승인제**(첫 계정이 관리자).
+- **사용자** — 로그인 ID + 닉네임 + 8자 이상 비밀번호 또는 Google 계정. **가입 승인제**(첫 계정이 관리자).
+  Google 신규 가입은 이메일을 로그인 ID, Google 이름을 닉네임으로 쓰며 기존 계정은 프로필에서 직접 연결합니다.
   로그인 실패 잠금: IP+계정 5회 또는 IP 20회 → 30초부터 30분까지 단계적, 24시간 조용하면 초기화.
   등급별 한도: 프로젝트 `admin` ∞ · `pro` 5 · `member` 3 · `guest` 1 / 이미지 총량 ∞ · 500MB · 200MB · 50MB(소유자 기준 차감).
   헤더 사용자 아이콘 → 프로필 이미지 · 등급 · 남은 한도 · 비밀번호 변경.
@@ -112,13 +113,17 @@ docker compose up -d --build
 - 서비스 포트: `docker-compose.yml`의 `frontend.ports`(`"3000:80"`) 수정
 - OAuth 공개 주소: `PUBLIC_URL` (기본값 `http://localhost:3000`). 외부에 배포하면
   `.env` 에 `PUBLIC_URL=https://실제-도메인` 을 반드시 지정합니다. HTTPS 주소와 `/mcp` 외부 경로가 실제 접속 주소와 같아야 합니다
+- Google 로그인: `.env`에 Google Cloud에서 발급한 `GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`을 지정합니다.
+  Google callback은 요청 Host를 허용 목록과 비교해 운영에서는
+  `https://prd.donhse.duckdns.org/api/auth/google/callback`, 로컬에서는
+  `http://localhost:3000/api/auth/google/callback`을 사용합니다. 로컬 Google 로그인은 `127.0.0.1` 대신 `localhost`로 접속합니다.
 - DB 계정/비밀번호: `.env` 의 `POSTGRES_USER`·`POSTGRES_PASSWORD`·`POSTGRES_DB`
   (`DATABASE_URL` 은 compose 가 이 값들로 조립합니다. 기존 볼륨의 비밀번호는 최초 생성 시점에 정해지므로,
   바꾸려면 `docker compose down -v` 로 초기화해야 합니다)
 
 ## API
 
-콘텐츠 API 는 로그인 토큰(`Authorization: Bearer <token>`) 또는 유효한 공유 토큰(`?share=<token>`)이 필요합니다.
+콘텐츠 API 는 브라우저 세션 쿠키, 로그인 토큰(`Authorization: Bearer <token>`) 또는 유효한 공유 토큰(`?share=<token>`)이 필요합니다.
 할 수 있는 일은 위 [권한 5단계](#주요-기능)를 따릅니다 — 표의 `편집자 이상` 같은 표기가 그것입니다.
 
 | 메서드 | 경로 | 설명 |
@@ -160,11 +165,13 @@ docker compose up -d --build
 | POST | `/api/projects/{pid}/images/delete` | 선택 이미지 삭제 (`{ids: [...]}`) → `{deleted, bytes}` |
 | GET | `/api/auth/id-available?login_id=...` | 로그인 ID 중복 확인 (`{available}`) |
 | POST | `/api/auth/register` | 회원가입 (`{login_id, display_name, password}`·비밀번호 8자 이상) |
-| POST | `/api/auth/login` | 로그인 (`{login_id, password}`) |
-| POST | `/api/auth/logout` | 로그아웃 (Bearer 토큰) |
+| POST | `/api/auth/login` | 로그인 (`{login_id, password}`), 24시간 세션 쿠키 발급 |
+| POST | `/api/auth/google/start` | Google 로그인·가입 또는 기존 계정 연결 시작 (`{mode: login\|link, return_to}`) |
+| GET | `/api/auth/google/callback` | Google OAuth callback (Authorization Code + PKCE·state·nonce 검증) |
+| POST | `/api/auth/logout` | 현재 브라우저 세션 로그아웃 |
 | GET / POST | `/oauth/login` | OAuth 승인 화면 — ChatGPT 연결 때 아이디·비밀번호로 로그인하고 승인 (`main.py`) |
 | — | `/authorize` · `/token` · `/register` · `/revoke` · `/.well-known/oauth-*` | OAuth 2.1 서버 (`mcp_app.py`, MCP SDK) — DCR · PKCE · 토큰 회전 · discovery |
-| GET | `/api/me` | 내 등급·프로젝트 수·이미지 사용량과 한도·프로필 이미지 |
+| GET | `/api/me` | 내 등급·프로젝트 수·이미지 사용량과 한도·프로필 이미지·Google 연결 상태 |
 | PUT | `/api/me/display-name` | 내 표시 이름 변경 (`{display_name}`) |
 | GET / POST | `/api/me/tokens` | MCP·플러그인 토큰 목록(마스킹) / 발급 (계정당 10개) |
 | DELETE | `/api/me/tokens/{id}` | 토큰 폐기 |
@@ -239,6 +246,7 @@ claude plugin install olgae-planner@olgae-planner
 ```bash
 docker compose up -d --build
 docker compose exec -T backend python test_oauth.py  # OAuth 스모크 테스트
+docker compose exec -T backend python test_google_auth.py  # Google 연결·가입·세션 보안 검사
 SESS=$(curl -s -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" -d '{"login_id":"<아이디>","password":"<비밀번호>"}' \
   | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
@@ -284,7 +292,8 @@ claude mcp add --transport http olgae-planner http://localhost:3000/mcp -s local
 │   ├── main.py          # FastAPI 전체 (스키마 생성 + 마이그레이션 + API·OAuth 로그인 화면)
 │   ├── mcp_app.py       # /mcp HTTP MCP + OAuth 2.1 서버 (main 의 핸들러를 재사용)
 │   ├── migrate_prd_tables.py  # 옛 마크다운 PRD 의 표를 컬렉션 행으로 (일회성, 선택)
-│   └── test_oauth.py    # DCR·PKCE·MCP·refresh·revoke 스모크 테스트
+│   ├── test_oauth.py    # DCR·PKCE·MCP·refresh·revoke 스모크 테스트
+│   └── test_google_auth.py # Google 연결·가입·24시간 세션 보안 검사
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf       # 정적 서빙 + /api·/mcp 프록시 + 보안 헤더
@@ -305,6 +314,8 @@ DB 구조는 [`docs/ERD.md`](docs/ERD.md) 에 관계도와 컬럼 설명이 있�
 - 신규 가입은 승인제를 유지하거나 관리자 페이지에서 차단
 - `MCP_ALLOWED_HOSTS` 에 배포 도메인 지정 (비우면 Host 검사가 꺼집니다)
 - `PUBLIC_URL` 이 실제 외부 HTTPS 주소와 일치하는지 확인 (`.env` 에서 지정, 기본값은 localhost 라 배포 시 반드시 바꿉니다)
+- Google Client Secret은 `.env`에만 두고 커밋하지 않습니다. 브라우저 세션은 24시간 HttpOnly 쿠키로 유지하고,
+  변경 요청은 별도 CSRF 토큰을 검증합니다. Google access·refresh token은 저장하지 않습니다.
 - 이미지는 URL 을 알면 인증 없이 열립니다(`/api/images/<id>`, id 는 128비트 난수)
 - 업로드는 PNG·JPEG·GIF·WebP 만 받고 앞바이트로 검증합니다(SVG 는 스크립트를 품을 수 있어 거부).
   프로필 이미지(data URL)도 base64 이미지 형식만 허용합니다

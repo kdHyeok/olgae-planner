@@ -5,7 +5,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 기동 시 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 맞춥니다.
 **DB 구조를 바꾸면 이 문서도 함께 고칩니다** (규칙은 [`CLAUDE.md`](../CLAUDE.md) 참고).
 
-- 테이블 20개
+- 테이블 21개
 - 모든 콘텐츠(기능 트리·PRD·이미지·용어·버전)는 **프로젝트(`projects`) 단위**로 소속됩니다.
 
 ## 관계도
@@ -13,6 +13,7 @@ PRD & 기능명세서 서비스의 PostgreSQL 스키마 문서입니다.
 ```mermaid
 erDiagram
     users ||--o{ sessions : "user_id · 로그인 세션"
+    users |o--o{ google_oauth_states : "user_id · 계정 연결 요청"
     users ||--o{ oauth_codes : "user_id · 승인한 사용자"
     users ||--o{ oauth_tokens : "user_id · 연결 계정"
     users |o--o{ projects : "owner_id · 소유자"
@@ -49,6 +50,8 @@ erDiagram
         text status "상태 active·pending(가입 승인 대기)"
         timestamptz created_at "가입 신청 시각"
         text avatar "프로필 이미지(data URL)"
+        text google_sub UK "Google 계정 고유 ID"
+        text google_email "연결된 Google 이메일"
     }
     project_members {
         int project_id PK_FK "프로젝트"
@@ -116,9 +119,20 @@ erDiagram
         timestamptz last_fail "마지막 실패 시각"
     }
     sessions {
-        text token PK "세션 토큰"
+        text token PK "세션 토큰 SHA-256 해시"
         int user_id FK "사용자"
         timestamptz created_at "발급 시각"
+        timestamptz expires_at "만료 시각"
+        text csrf_token_hash "CSRF 토큰 SHA-256 해시"
+    }
+    google_oauth_states {
+        text state_hash PK "OAuth state SHA-256 해시"
+        text mode "login·link"
+        int user_id FK "연결할 사용자"
+        text code_verifier "PKCE verifier"
+        text nonce_hash "OIDC nonce SHA-256 해시"
+        text return_to "완료 후 내부 경로"
+        timestamptz expires_at "만료 시각"
     }
     projects {
         serial id PK "프로젝트 ID(내부용)"
@@ -226,7 +240,7 @@ erDiagram
 
 | 부모를 지우면 | 자식은 |
 |---|---|
-| `users` → `sessions`, `oauth_codes`, `oauth_tokens`, `projects`, `comments` | **함께 삭제** (CASCADE) |
+| `users` → `sessions`, `google_oauth_states`, `oauth_codes`, `oauth_tokens`, `projects`, `comments` | **함께 삭제** (CASCADE) |
 | `users` → `comments.resolved_by` | **NULL 로 바뀜** (SET NULL) — 완료 사실은 남고 완료자만 지워짐 |
 | `oauth_clients` → `oauth_requests`, `oauth_codes`, `oauth_tokens` | **함께 삭제** (CASCADE) |
 | `users` → `versions.user_id` | **NULL 로 바뀜** (SET NULL) — 기록은 `username` 으로 남음 |
@@ -256,6 +270,8 @@ erDiagram
 | `status` | 상태 | text | NN | `'pending'` | `active` 로그인 가능 · `pending` 가입 승인 대기. 첫 계정만 곧바로 `admin`/`active` |
 | `created_at` | 가입 신청 시각 | timestamptz | NN | `now()` | 가입 신청 목록 정렬 기준 |
 | `avatar` | 프로필 이미지 | text | | | 128px 정사각형 data URL. 프런트에서 줄여 보내며 상한 200,000자 |
+| `google_sub` | Google 계정 ID | text | UK (`users_google_sub_idx`) | | Google이 발급한 안정 식별자 `sub`. 로그인·중복 연결 판정 기준 |
+| `google_email` | Google 이메일 | text | | | 프로필 표시용. 이메일 변경 가능성 때문에 계정 식별에는 쓰지 않음 |
 
 ### project_members — 프로젝트 참여자
 
@@ -291,7 +307,8 @@ erDiagram
 | `last_used_at` | 마지막 사용 | timestamptz | | | 요청마다 쓰지 않고 **한 시간에 한 번만** 갱신 |
 
 `opt_user()` 가 `Bearer` 값의 접두어를 보고 `api_tokens`(olg_…), `oauth_tokens`(olgo_…),
-`sessions` 중 어디를 볼지 고릅니다.
+`sessions` 중 어디를 볼지 고릅니다. 브라우저는 세션을 HttpOnly 쿠키로 보내고,
+기존 API 클라이언트는 세션 Bearer 토큰도 사용할 수 있습니다.
 브라우저 로그아웃은 `sessions` 만 지우므로 플러그인은 계속 동작하고,
 관리자 비밀번호 재설정은 두 테이블을 함께 지웁니다.
 
@@ -400,11 +417,31 @@ OAuth 로그인은 기존 `users.login_id`·비밀번호와 `login_attempts` 잠
 
 | 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
 |---|---|---|---|---|---|
-| `token` | 세션 토큰 | text | PK | | `Authorization: Bearer <token>` 으로 전달 |
+| `token` | 세션 토큰 해시 | text | PK | | 신규 세션은 원문 대신 SHA-256 해시 저장. 기존 Bearer 세션 행도 조회 호환 |
 | `user_id` | 사용자 | int | FK → users(id) CASCADE, NN | | |
-| `created_at` | 발급 시각 | timestamptz | NN | `now()` | 기동 시 30일 지난 세션을 정리하는 기준 |
+| `created_at` | 발급 시각 | timestamptz | NN | `now()` | |
+| `expires_at` | 만료 시각 | timestamptz | NN | `now() + 24시간` | 요청마다 현재 시각과 비교 |
+| `csrf_token_hash` | CSRF 토큰 해시 | text | | | 쿠키 인증의 변경 요청에서 헤더 토큰과 비교 |
 
-세션은 로그아웃하거나, 발급 30일이 지나 백엔드가 다시 기동될 때 삭제됩니다(요청마다 만료 검사는 하지 않음).
+브라우저에는 24시간짜리 `olgae_session` HttpOnly·SameSite=Lax 쿠키와
+`olgae_csrf` 쿠키를 발급합니다. GET 이외의 쿠키 인증 요청은 `X-CSRF-Token` 헤더를 검증하며,
+세션 만료는 요청마다 확인합니다. Google callback은 최상위 GET 이동이라 SameSite=Lax 세션을 이어받습니다.
+
+### google_oauth_states — Google 로그인·연결 요청
+
+| 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `state_hash` | 상태값 해시 | text | PK | | 원문 `state`는 브라우저에만 전달하고 DB에는 SHA-256 해시 저장. callback에서 한 번 사용 후 삭제 |
+| `mode` | 요청 방식 | text | NN, CHECK | | `login` 로그인·가입 또는 `link` 기존 계정 연결 |
+| `user_id` | 연결 사용자 | int | FK → users(id) CASCADE | | `link`일 때만 필수. callback 세션 사용자와 일치해야 함 |
+| `code_verifier` | PKCE 검증값 | text | NN | | Google token 교환에 사용. S256 challenge만 전송 |
+| `nonce_hash` | OIDC nonce 해시 | text | NN | | ID token의 nonce 재생 공격 방지 |
+| `return_to` | 완료 후 경로 | text | NN | `'/'` | 같은 서비스의 상대 경로만 허용 |
+| `expires_at` | 만료 시각 | timestamptz | NN | | 10분. callback에서 만료 검사 |
+
+Google access·refresh token은 저장하지 않습니다. callback에서 받은 ID token은 Google 서명과
+`aud`·`iss`·`exp`를 검증한 뒤 `sub`·검증된 이메일·이름만 사용합니다. 같은 이메일의 기존 일반 계정은
+자동 병합하지 않고, 일반 로그인 후 프로필에서 명시적으로 연결해야 합니다.
 
 ### projects — 프로젝트
 
@@ -579,9 +616,9 @@ PK / UNIQUE 인덱스 외에 **모든 FK 컬럼에 단일 인덱스**가 있습�
 | `items_props_trgm_idx` GIN `(props::text) gin_trgm_ops` | 행 검색 `ILIKE '%q%'` (`GET /api/projects/{pid}/items`, MCP `search_items`) · 이미지 참조 정규식 스캔. **`pg_trgm` 확장** 필요 — 없으면 `init_db` 가 경고만 남기고 순차 스캔으로 동작 |
 | `item_events_item_id_idx` (item_id, at DESC) | 행별 이력 최신순 |
 | `images_project_id_idx`, `terms_project_id_idx`, `terms_category_id_idx`, `term_categories_project_id_idx`, `versions_project_id_idx` | 프로젝트별 목록 |
-| `users_login_id_idx`, `users_username_key` | 로그인 ID 중복 방지 (`username` 은 이전 버전 호환용) |
+| `users_login_id_idx`, `users_username_key`, `users_google_sub_idx` | 로그인 ID 중복 방지 (`username` 은 이전 버전 호환용) · Google 계정 중복 연결 방지 |
 | `users_status_idx` | 가입 승인 대기 목록 |
-| `sessions_user_id_idx`, `projects_owner_id_idx`, `api_tokens_user_id_idx`, `project_members_user_id_idx`, `oauth_codes_user_id_idx`, `oauth_tokens_user_id_idx` | 사용자 삭제 시 연쇄 · 내 토큰/참여 목록 |
+| `sessions_user_id_idx`, `google_oauth_states_user_id_idx`, `projects_owner_id_idx`, `api_tokens_user_id_idx`, `project_members_user_id_idx`, `oauth_codes_user_id_idx`, `oauth_tokens_user_id_idx` | 사용자 삭제 시 연쇄 · 내 토큰/참여 목록 |
 | `terms_project_id_term_key`, `term_categories_project_id_name_key`, `oauth_tokens_refresh_token_hash_key` | 용어·카테고리 이름 중복 방지 · refresh 토큰 해시 조회 |
 | `oauth_requests_client_id_idx`, `oauth_codes_client_id_idx`, `oauth_tokens_client_id_idx` | OAuth 클라이언트 삭제 시 연쇄 |
 
