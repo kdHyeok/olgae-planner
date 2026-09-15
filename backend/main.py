@@ -1,14 +1,19 @@
+import base64
 import hashlib
 import html
 import json
 import os
 import re
 import secrets
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
 from psycopg.errors import UniqueViolation
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
@@ -40,6 +45,19 @@ PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:3000").rstrip("/")
 OAUTH_RESOURCE = PUBLIC_URL + "/mcp"
 OAUTH_SCOPE = "mcp"
 OAUTH_ACCESS_PREFIX = "olgo_"
+SESSION_TTL_SECONDS = 24 * 60 * 60
+SESSION_COOKIE = "olgae_session"
+CSRF_COOKIE = "olgae_csrf"
+COOKIE_SECURE = PUBLIC_URL.startswith("https://")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_ORIGINS = {
+    "localhost:3000": "http://localhost:3000",
+    "prd.donhse.duckdns.org": "https://prd.donhse.duckdns.org",
+    "prd.donhse.duckdns.org:443": "https://prd.donhse.duckdns.org",
+}
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 MAX_AVATAR_CHARS = 200_000       # 프로필 이미지(data URL) 길이 상한, 대략 150KB
 # data URL 은 base64 가 아니어도 되므로(`data:image/png,<임의 텍스트>`) 형식을 못 박는다.
@@ -145,6 +163,10 @@ def init_db():
             ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS locks int NOT NULL DEFAULT 0;
             ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS locked_until timestamptz;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub text;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS google_email text;
+            CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx
+                ON users (google_sub) WHERE google_sub IS NOT NULL;
             CREATE TABLE IF NOT EXISTS sessions (
                 token text PRIMARY KEY,
                 user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -152,6 +174,23 @@ def init_db():
             );
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS
                 created_at timestamptz NOT NULL DEFAULT now();
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS csrf_token_hash text;
+            UPDATE sessions SET expires_at = created_at + interval '24 hours'
+             WHERE expires_at IS NULL;
+            ALTER TABLE sessions ALTER COLUMN expires_at
+                SET DEFAULT (now() + interval '24 hours');
+            ALTER TABLE sessions ALTER COLUMN expires_at SET NOT NULL;
+            CREATE TABLE IF NOT EXISTS google_oauth_states (
+                state_hash text PRIMARY KEY,
+                mode text NOT NULL CHECK (mode IN ('login', 'link')),
+                user_id int REFERENCES users(id) ON DELETE CASCADE,
+                code_verifier text NOT NULL,
+                nonce_hash text NOT NULL,
+                return_to text NOT NULL DEFAULT '/',
+                expires_at timestamptz NOT NULL,
+                CHECK ((mode = 'link') = (user_id IS NOT NULL))
+            );
             CREATE TABLE IF NOT EXISTS projects (
                 id serial PRIMARY KEY,
                 owner_id int REFERENCES users(id) ON DELETE CASCADE,
@@ -255,6 +294,8 @@ def init_db():
             CREATE INDEX IF NOT EXISTS oauth_codes_user_id_idx ON oauth_codes (user_id);
             CREATE INDEX IF NOT EXISTS oauth_tokens_user_id_idx ON oauth_tokens (user_id);
             CREATE INDEX IF NOT EXISTS oauth_tokens_client_id_idx ON oauth_tokens (client_id);
+            CREATE INDEX IF NOT EXISTS google_oauth_states_user_id_idx
+                ON google_oauth_states (user_id);
             -- 목록·삭제에 쓰는 번호. 토큰 값 자체를 다시 내보내지 않으려고 둔다
             ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS id serial;
             -- 예전 'viewer' 멤버 등급은 없어졌다. 읽기 전용은 이제 공유 링크 상태이지 멤버가 아니다
@@ -271,12 +312,12 @@ def init_db():
             UPDATE users SET role = 'admin', status = 'active'
              WHERE id = (SELECT min(id) FROM users)
                AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin');
-            -- ponytail: 세션 만료는 기동 시 30일 지난 것만 지우는 방식. 요청마다 검사해야 하면 opt_user 에 조건 추가
-            DELETE FROM sessions WHERE created_at < now() - interval '30 days';
+            DELETE FROM sessions WHERE expires_at <= now();
             DELETE FROM login_attempts WHERE last_fail < now() - interval '24 hours';
             DELETE FROM oauth_requests WHERE expires_at < now();
             DELETE FROM oauth_codes WHERE expires_at < now();
             DELETE FROM oauth_tokens WHERE refresh_expires_at < now();
+            DELETE FROM google_oauth_states WHERE expires_at < now();
         """)
 
         # ---- 컬렉션(커스텀 표)·번호 체계. 설계는 docs/PLAN-collections.md §4 ----
@@ -580,19 +621,36 @@ def lookup_token_user(tok: str) -> dict | None:
                                AND (last_used_at IS NULL
                                     OR last_used_at < now() - interval '1 hour')""", (tok,))
         else:
-            cur.execute("""SELECT u.id, u.login_id, u.display_name, u.role, u.status FROM sessions s
-                           JOIN users u ON u.id = s.user_id WHERE s.token = %s""", (tok,))
+            cur.execute("""SELECT u.id, u.login_id, u.display_name, u.role, u.status,
+                                  s.csrf_token_hash
+                           FROM sessions s JOIN users u ON u.id = s.user_id
+                           WHERE s.token = ANY(%s) AND s.expires_at > now()""",
+                        ([tok, token_hash(tok)],))
             row = cur.fetchone()
+            if row:
+                auth = {"_csrf_token_hash": row[5]}
     if not row or row[4] != "active":
         return None                      # 대기·차단 계정의 토큰은 통하지 않는다
     return {"id": row[0], "login_id": row[1], "display_name": row[2], "role": row[3], **auth}
 
 
-def opt_user(authorization: str | None = Header(None)) -> dict | None:
-    """Bearer 세션·계정별 API 토큰·OAuth access token으로 사용자를 찾는다."""
-    if not authorization or not authorization.startswith("Bearer "):
+def opt_user(request: Request, authorization: str | None = Header(None),
+             x_csrf_token: str | None = Header(None)) -> dict | None:
+    """Bearer 토큰 또는 HttpOnly 세션 쿠키로 사용자를 찾고 쿠키 요청은 CSRF를 검증한다."""
+    bearer = authorization[7:] if authorization and authorization.startswith("Bearer ") else None
+    cookie_token = request.cookies.get(SESSION_COOKIE)
+    tok = bearer or cookie_token
+    if not tok:
         return None
-    return lookup_token_user(authorization[7:])
+    user = lookup_token_user(tok)
+    if not user:
+        return None
+    csrf_hash = user.pop("_csrf_token_hash", None)
+    if not bearer and request.method not in ("GET", "HEAD", "OPTIONS"):
+        if not csrf_hash or not x_csrf_token or not secrets.compare_digest(
+                csrf_hash, token_hash(x_csrf_token)):
+            raise HTTPException(403, "요청 검증에 실패했습니다. 페이지를 새로고침해 주세요.")
+    return user
 
 
 def current_user(user: dict | None = Depends(opt_user)) -> dict:
@@ -782,10 +840,33 @@ def node_project(cur, node_id: int) -> int:
     return row[0]
 
 
-def make_session(cur, user_id: int) -> str:
-    token = secrets.token_hex(32)
-    cur.execute("INSERT INTO sessions (token, user_id) VALUES (%s, %s)", (token, user_id))
-    return token
+def make_session(cur, user_id: int) -> tuple[str, str]:
+    token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
+    cur.execute("""INSERT INTO sessions (token, user_id, csrf_token_hash, expires_at)
+                   VALUES (%s, %s, %s, now() + interval '24 hours')""",
+                (token_hash(token), user_id, token_hash(csrf)))
+    return token, csrf
+
+
+def set_session_cookies(response: Response, token: str, csrf: str):
+    common = {"max_age": SESSION_TTL_SECONDS, "secure": COOKIE_SECURE,
+              "samesite": "lax", "path": "/"}
+    response.headers["Cache-Control"] = "no-store"
+    response.set_cookie(SESSION_COOKIE, token, httponly=True, **common)
+    response.set_cookie(CSRF_COOKIE, csrf, httponly=False, **common)
+
+
+def clear_session_cookies(response: Response):
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=COOKIE_SECURE,
+                           httponly=True, samesite="lax")
+    response.delete_cookie(CSRF_COOKIE, path="/", secure=COOKIE_SECURE,
+                           httponly=False, samesite="lax")
+
+
+def session_payload(cur, response: Response, user: dict) -> dict:
+    token, csrf = make_session(cur, user["id"])
+    set_session_cookies(response, token, csrf)
+    return {**user, "token": token, "expires_in": SESSION_TTL_SECONDS}
 
 
 @app.get("/api/auth/id-available")
@@ -799,11 +880,11 @@ def id_available(login_id: str):
 
 
 @app.post("/api/auth/register", status_code=201)
-def register(body: RegisterCredentials):
+def register(body: RegisterCredentials, response: Response):
     """첫 계정은 곧바로 관리자, 그 뒤는 관리자 승인을 기다리는 대기 상태로 만든다."""
     login_id, display_name = body.login_id.strip(), body.display_name.strip()
     if not login_id or not display_name:
-        raise HTTPException(400, "아이디와 표시 이름이 필요합니다")
+        raise HTTPException(400, "아이디와 닉네임이 필요합니다")
     if len(body.password) < PASSWORD_MIN:
         raise HTTPException(400, f"비밀번호는 {PASSWORD_MIN}자 이상이어야 합니다")
     with pool.connection() as conn, conn.cursor() as cur:
@@ -824,8 +905,8 @@ def register(body: RegisterCredentials):
             raise HTTPException(409, "이미 사용 중인 아이디입니다")
         uid = row[0]
         if status == "active":
-            return {"token": make_session(cur, uid), "id": uid, "login_id": login_id,
-                    "display_name": display_name, "role": role}
+            return session_payload(cur, response, {"id": uid, "login_id": login_id,
+                                                   "display_name": display_name, "role": role})
     return {"status": "pending", "login_id": login_id, "display_name": display_name,
             "message": "가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다."}
 
@@ -863,10 +944,221 @@ def authenticate_user(login_id: str, password: str, request: Request) -> dict:
 
 
 @app.post("/api/auth/login")
-def login(body: LoginCredentials, request: Request):
+def login(body: LoginCredentials, request: Request, response: Response):
     user = authenticate_user(body.login_id, body.password, request)
     with pool.connection() as conn, conn.cursor() as cur:
-        return {**user, "token": make_session(cur, user["id"])}
+        return session_payload(cur, response, user)
+
+
+class GoogleStart(BaseModel):
+    mode: str = "login"
+    return_to: str = "/"
+
+
+def google_configured():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(503, "Google 로그인이 아직 설정되지 않았습니다")
+
+
+def google_redirect_uri(request: Request) -> str:
+    """요청 Host를 등록된 두 origin 중 하나로만 매핑한다."""
+    origin = GOOGLE_ORIGINS.get(request.headers.get("host", "").lower())
+    request_origin = request.headers.get("origin", "").rstrip("/")
+    if not origin or (request_origin and request_origin != origin):
+        raise HTTPException(400, "허용되지 않은 Google 로그인 주소입니다")
+    return origin + "/api/auth/google/callback"
+
+
+def safe_return_to(value: str) -> str:
+    value = (value or "/")[:1000]
+    parsed = urlsplit(value)
+    return value if value.startswith("/") and not value.startswith("//") \
+        and not parsed.scheme and not parsed.netloc else "/"
+
+
+def with_google_result(return_to: str, result: str) -> str:
+    parsed = urlsplit(safe_return_to(return_to))
+    query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+             if k != "google"]
+    query.append(("google", result))
+    return urlunsplit(("", "", parsed.path or "/", urlencode(query), parsed.fragment))
+
+
+def create_google_request(mode: str, user_id: int | None, return_to: str,
+                          redirect_uri: str) -> str:
+    state = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(64)
+    nonce = secrets.token_urlsafe(32)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()) \
+        .rstrip(b"=").decode()
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO google_oauth_states
+                       (state_hash, mode, user_id, code_verifier, nonce_hash, return_to, expires_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, now() + interval '10 minutes')""",
+                    (token_hash(state), mode, user_id, verifier, token_hash(nonce),
+                     safe_return_to(return_to)))
+    return GOOGLE_AUTH_URL + "?" + urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "nonce": nonce,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "prompt": "select_account",
+    })
+
+
+def consume_google_request(state: str) -> dict | None:
+    if not state:
+        return None
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("""DELETE FROM google_oauth_states
+                        WHERE state_hash = %s AND expires_at > now()
+                    RETURNING mode, user_id, code_verifier, nonce_hash, return_to""",
+                    (token_hash(state),))
+        row = cur.fetchone()
+    return ({"mode": row[0], "user_id": row[1], "code_verifier": row[2],
+             "nonce_hash": row[3], "return_to": row[4]} if row else None)
+
+
+def verify_google_code(code: str, verifier: str, expected_nonce_hash: str,
+                       redirect_uri: str) -> dict:
+    with httpx.Client(timeout=10) as client:
+        response = client.post(GOOGLE_TOKEN_URL, data={
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+            "code_verifier": verifier,
+        })
+        response.raise_for_status()
+        raw_id_token = response.json().get("id_token")
+    if not raw_id_token:
+        raise ValueError("missing id_token")
+    claims = google_id_token.verify_oauth2_token(
+        raw_id_token, google_auth_requests.Request(), GOOGLE_CLIENT_ID)
+    nonce = str(claims.get("nonce", ""))
+    if not nonce or not secrets.compare_digest(token_hash(nonce), expected_nonce_hash):
+        raise ValueError("invalid nonce")
+    if claims.get("email_verified") is not True:
+        raise ValueError("unverified email")
+    return claims
+
+
+def apply_google_identity(flow: dict, claims: dict) -> dict:
+    sub = str(claims.get("sub", ""))[:255]
+    email = str(claims.get("email", "")).strip().lower()[:320]
+    nickname = str(claims.get("name", "")).strip()[:100] or email.split("@", 1)[0][:100]
+    if not sub or not email or "@" not in email or not nickname:
+        raise HTTPException(400, "failed")
+
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            if flow["mode"] == "link":
+                cur.execute("SELECT google_sub FROM users WHERE id = %s", (flow["user_id"],))
+                current = cur.fetchone()
+                if not current:
+                    raise HTTPException(404, "failed")
+                if current[0] and current[0] != sub:
+                    raise HTTPException(409, "already-connected")
+                cur.execute("SELECT 1 FROM users WHERE google_sub = %s AND id <> %s",
+                            (sub, flow["user_id"]))
+                if cur.fetchone():
+                    raise HTTPException(409, "already-linked")
+                cur.execute("""UPDATE users SET google_sub = %s, google_email = %s
+                                WHERE id = %s""", (sub, email, flow["user_id"]))
+                return {"status": "linked"}
+
+            cur.execute("""SELECT id, login_id, display_name, role, status
+                             FROM users WHERE google_sub = %s""", (sub,))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE users SET google_email = %s WHERE id = %s", (email, row[0]))
+                if row[4] == "pending":
+                    return {"status": "pending"}
+                if row[4] != "active":
+                    raise HTTPException(403, "blocked")
+                return {"status": "authenticated", "user": {
+                    "id": row[0], "login_id": row[1], "display_name": row[2], "role": row[3]}}
+
+            cur.execute("SELECT 1 FROM users WHERE login_id = %s", (email,))
+            if cur.fetchone():
+                raise HTTPException(409, "link-required")
+            cur.execute("SELECT count(*) FROM users")
+            first = cur.fetchone()[0] == 0
+            if not first and get_setting(cur, "signup_open", "1") != "1":
+                raise HTTPException(403, "signup-closed")
+            role, status = ("admin", "active") if first else ("guest", "pending")
+            random_password = secrets.token_urlsafe(48)
+            cur.execute("""INSERT INTO users
+                           (username, login_id, display_name, password, role, status,
+                            google_sub, google_email)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                       RETURNING id""",
+                        (email, email, nickname, hash_pw(random_password), role, status,
+                         sub, email))
+            uid = cur.fetchone()[0]
+            if status == "pending":
+                return {"status": "pending"}
+            return {"status": "authenticated", "user": {
+                "id": uid, "login_id": email, "display_name": nickname, "role": role}}
+    except UniqueViolation:
+        raise HTTPException(409, "link-required")
+
+
+@app.post("/api/auth/google/start")
+def google_start(body: GoogleStart, request: Request, response: Response,
+                 user: dict | None = Depends(opt_user)):
+    google_configured()
+    if body.mode not in ("login", "link"):
+        raise HTTPException(400, "Google 로그인 방식이 올바르지 않습니다")
+    if body.mode == "link" and not user:
+        raise HTTPException(401, "로그인이 필요합니다")
+    if body.mode == "link":
+        with pool.connection() as conn, conn.cursor() as cur:
+            token, csrf = make_session(cur, user["id"])
+        set_session_cookies(response, token, csrf)
+    return {"url": create_google_request(body.mode,
+                                          user["id"] if body.mode == "link" else None,
+                                          body.return_to, google_redirect_uri(request))}
+
+
+@app.get("/api/auth/google/callback")
+def google_callback(request: Request, state: str = "", code: str = "", error: str = "",
+                    browser_user: dict | None = Depends(opt_user)):
+    flow = consume_google_request(state)
+    if not flow:
+        return RedirectResponse("/?google=invalid-state", status_code=303)
+    if error or not code:
+        return RedirectResponse(with_google_result(flow["return_to"], "cancelled"), status_code=303)
+    if flow["mode"] == "link" and (
+            not browser_user or browser_user["id"] != flow["user_id"]):
+        return RedirectResponse(with_google_result(flow["return_to"], "login-required"),
+                                status_code=303)
+    try:
+        claims = verify_google_code(code, flow["code_verifier"], flow["nonce_hash"],
+                                    google_redirect_uri(request))
+        result = apply_google_identity(flow, claims)
+    except HTTPException as exc:
+        result_code = str(exc.detail) if str(exc.detail) in {
+            "already-connected", "already-linked", "blocked", "link-required", "signup-closed"
+        } else "failed"
+        return RedirectResponse(with_google_result(flow["return_to"], result_code), status_code=303)
+    except (ValueError, httpx.HTTPError):
+        return RedirectResponse(with_google_result(flow["return_to"], "failed"), status_code=303)
+
+    if result["status"] == "pending":
+        return RedirectResponse(with_google_result(flow["return_to"], "pending"), status_code=303)
+    target = RedirectResponse(with_google_result(flow["return_to"], result["status"]),
+                              status_code=303)
+    if result["status"] == "authenticated":
+        with pool.connection() as conn, conn.cursor() as cur:
+            token, csrf = make_session(cur, result["user"]["id"])
+        set_session_cookies(target, token, csrf)
+    return target
 
 
 @app.get("/api/me")
@@ -874,12 +1166,13 @@ def me(user: dict = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
         used = project_count(cur, user["id"])
         up_used, up_limit = upload_usage(cur, user["id"], user["role"])
-        cur.execute("SELECT avatar FROM users WHERE id = %s", (user["id"],))
-        avatar = cur.fetchone()[0]
+        cur.execute("SELECT avatar, google_email FROM users WHERE id = %s", (user["id"],))
+        avatar, google_email = cur.fetchone()
     return {"id": user["id"], "login_id": user["login_id"],
             "display_name": user["display_name"], "role": user["role"],
             "projects": used, "project_limit": ROLE_LIMITS.get(user["role"]),
-            "upload_bytes": up_used, "upload_limit": up_limit, "avatar": avatar}
+            "upload_bytes": up_used, "upload_limit": up_limit, "avatar": avatar,
+            "google_connected": bool(google_email), "google_email": google_email}
 
 
 class DisplayNameIn(BaseModel):
@@ -963,7 +1256,8 @@ class PasswordChange(BaseModel):
 
 
 @app.put("/api/me/password")
-def change_my_password(body: PasswordChange, user: dict = Depends(current_user)):
+def change_my_password(body: PasswordChange, response: Response,
+                       user: dict = Depends(current_user)):
     """현재 비밀번호를 확인하고 바꾼다. 다른 기기의 세션은 모두 끊고 새 토큰을 준다."""
     if len(body.password) < PASSWORD_MIN:
         raise HTTPException(400, f"새 비밀번호는 {PASSWORD_MIN}자 이상이어야 합니다")
@@ -977,16 +1271,19 @@ def change_my_password(body: PasswordChange, user: dict = Depends(current_user))
         cur.execute("DELETE FROM sessions WHERE user_id = %s", (user["id"],))
         cur.execute("DELETE FROM oauth_codes WHERE user_id = %s", (user["id"],))
         cur.execute("DELETE FROM oauth_tokens WHERE user_id = %s", (user["id"],))
-        return {"token": make_session(cur, user["id"]), "id": user["id"],
-                "login_id": user["login_id"], "display_name": user["display_name"],
-                "role": user["role"]}
+        return session_payload(cur, response, user)
 
 
 @app.post("/api/auth/logout", status_code=204)
-def logout(authorization: str | None = Header(None)):
-    if authorization and authorization.startswith("Bearer "):
+def logout(request: Request, response: Response, authorization: str | None = Header(None),
+           _: dict = Depends(current_user)):
+    bearer = authorization[7:] if authorization and authorization.startswith("Bearer ") else None
+    token = bearer or request.cookies.get(SESSION_COOKIE)
+    if token and not token.startswith((API_TOKEN_PREFIX, OAUTH_ACCESS_PREFIX)):
         with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM sessions WHERE token = %s", (authorization[7:],))
+            cur.execute("DELETE FROM sessions WHERE token = ANY(%s)",
+                        ([token, token_hash(token)],))
+    clear_session_cookies(response)
 
 
 # ---------- admin ----------

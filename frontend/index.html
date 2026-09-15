@@ -121,6 +121,32 @@
   .modal-box { background: #fff; border-radius: 12px; width: min(880px, 94vw);
     max-width: 92vw; max-height: 80vh; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
   .modal-box.account-modal { width: min(540px, 92vw); }
+  .modal-box.auth-modal { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+    border-radius: 18px; }
+  .auth-modal .modal-body { padding: 0; }
+  .auth-card { position: relative; padding: 42px 42px 34px; }
+  .auth-close { position: absolute; top: 16px; right: 16px; width: 34px; height: 34px; padding: 0;
+    border: 0; background: transparent; color: #555; font-size: 27px; line-height: 1; cursor: pointer; }
+  .auth-title { margin: 14px 0 30px; text-align: center; font-size: 24px; color: #222; }
+  .auth-form { display: grid; gap: 16px; }
+  .auth-field { display: grid; gap: 7px; font-size: 14px; font-weight: 600; color: #333; }
+  .auth-field input { width: 100%; padding: 12px 13px; border: 1px solid #ddd; border-radius: 8px;
+    outline: none; font: inherit; font-weight: 400; }
+  .auth-field input:focus { border-color: #555; box-shadow: 0 0 0 2px rgba(51,51,51,.08); }
+  .auth-submit { width: 100%; margin-top: 4px; padding: 12px 16px; font-weight: 700; }
+  .google-auth-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 11px 14px; border: 1px solid #d8d8d8; border-radius: 8px; background: #fff;
+    color: #333; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .google-auth-btn:hover { background: #f7f7f7; }
+  .auth-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; color: #aaa; font-size: 12px; }
+  .auth-divider::before, .auth-divider::after { content: ''; flex: 1; border-top: 1px solid #e1e1e1; }
+  .google-link { margin-top: 12px; padding: 10px; border: 1px solid #e8e8e4; border-radius: 8px;
+    font-size: 12px; color: #777; }
+  .google-link .btn { width: 100%; padding: 6px 8px; font-size: 12px; }
+  .auth-switch { margin-top: 22px; text-align: center; color: #888; font-size: 13px; }
+  .auth-switch button { padding: 0; border: 0; background: transparent; color: #333; font: inherit;
+    font-weight: 600; text-decoration: underline; cursor: pointer; }
+  @media (max-width: 520px) { .auth-card { padding: 38px 24px 28px; } }
   .account-row { display: flex; gap: 7px; margin-top: 8px; }
   .account-row .inline-edit { min-width: 0; padding: 6px 8px; }
   .account-row .btn { flex: 0 0 84px; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
@@ -473,17 +499,17 @@ function needEdit() {
 }
 let project = null, projects = [];
 let restoreScroll = () => {};
-let modalRender = null;
-function showModal(fn) { modalRender = fn; paintModal(); }
+let modalRender = null, modalClass = '';
+function showModal(fn, className = '') { modalRender = fn; modalClass = className; paintModal(); }
 function paintModal() {
   const m = document.getElementById('modal');
   if (!modalRender) return;
-  m.innerHTML = `<div class="modal-box"><div class="modal-body">${modalRender()}</div></div>`;
+  m.innerHTML = `<div class="modal-box ${modalClass}"><div class="modal-body">${modalRender()}</div></div>`;
   m.hidden = false;
   m.onclick = e => { if (e.target === m) closeModal(); };
 }
 function closeModal() {
-  modalRender = null;
+  modalRender = null; modalClass = '';
   const m = document.getElementById('modal');
   m.hidden = true; m.innerHTML = '';
 }
@@ -564,11 +590,18 @@ let invalidShare = false;
 
 let auth = null;
 try { auth = JSON.parse(localStorage.getItem('auth')); } catch (e) {}
-const authHeaders = () => auth ? { Authorization: 'Bearer ' + auth.token } : {};
+// 세션 토큰은 HttpOnly 쿠키만 쓴다. 구버전 localStorage 토큰은 배포 후 한 번 폐기한다.
+if (auth && auth.token) { delete auth.token; localStorage.setItem('auth', JSON.stringify(auth)); }
+const authHeaders = () => auth && auth.token ? { Authorization: 'Bearer ' + auth.token } : {};
+const cookieValue = name => document.cookie.split('; ').map(v => v.split('='))
+  .find(([k]) => k === name)?.slice(1).join('=') || '';
 
 const api = (url, opt = {}) => {
   if (shareToken) url += (url.includes('?') ? '&' : '?') + 'share=' + encodeURIComponent(shareToken);
-  return fetch(url, { ...opt, headers: { ...authHeaders(), ...(opt.headers || {}) } })
+  const method = (opt.method || 'GET').toUpperCase();
+  const csrf = ['GET', 'HEAD', 'OPTIONS'].includes(method) ? '' : cookieValue('olgae_csrf');
+  return fetch(url, { ...opt, credentials: 'same-origin',
+    headers: { ...authHeaders(), ...(csrf ? { 'X-CSRF-Token': csrf } : {}), ...(opt.headers || {}) } })
   .then(async r => {
     if (!r.ok) throw Object.assign(new Error(r.status), { detail: (await r.json().catch(() => ({}))).detail });
     return r.status === 204 ? null : r.json();
@@ -583,11 +616,7 @@ function renderAuth() {
        <span style="font-size:14px;color:#555"><b>${esc(auth.display_name || auth.username)}</b> 님</span>
        ${profileOpen ? profileMenuHTML() : ''}
        <button class="btn danger ibtn" onclick="doLogout()" title="로그아웃" aria-label="로그아웃"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/></svg></button>`
-    : `<input type="text" id="au-id" placeholder="아이디" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px">
-       <input type="password" id="au-pw" placeholder="비밀번호" style="width:110px;padding:6px;border:1px solid #ddd;border-radius:6px"
-         onkeydown="if(event.key==='Enter')doLogin()">
-       <button class="btn primary" onclick="doLogin()">로그인</button>
-       <button class="btn" onclick="doRegister()">회원가입</button>`;
+    : `<button class="btn primary" onclick="openAuthModal('login')">로그인</button>`;
 }
 // ---------- 내 계정 팝오버 ----------
 let profileOpen = false, profile = null;
@@ -628,6 +657,9 @@ function profileMenuHTML() {
     </div>
     <p class="hint" style="margin:8px 0 0">사진을 눌러 프로필 이미지를 등록합니다.${
       m.avatar ? ' <a href="#" onclick="return removeAvatar()">지우기</a>' : ''}</p>
+    <div class="google-link">${m.google_connected
+      ? `<b>Google 연결됨</b><br>${esc(m.google_email)}`
+      : `<button class="btn" onclick="startGoogle('link')">Google 계정 연결</button>`}</div>
     ${gaugeHTML('프로젝트', m.projects, m.project_limit, n => n + '개')}
     ${gaugeHTML('이미지 용량', m.upload_bytes, m.upload_limit, MB)}
     <div style="display:flex;gap:8px;margin-top:13px">
@@ -731,30 +763,71 @@ async function changeMyPassword() {
 }
 
 function setAuth(a) {
-  auth = a; localStorage.setItem('auth', JSON.stringify(a));
+  auth = { ...a }; delete auth.token;
+  localStorage.setItem('auth', JSON.stringify(auth));
   profile = null; profileOpen = false; renderAuth();
   // 로그인 응답에는 프로필 이미지가 없다. 바로 받아와 헤더 아이콘에 반영한다
   api('/api/me').then(m => { profile = m; renderAuth(); }).catch(() => {});
   if (shareToken) render(); else loadProjects().then(render);
 }
-async function doLogin() {
+const GOOGLE_MARK = `<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.91c1.7-1.57 2.69-3.88 2.69-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.91-2.26c-.81.54-1.84.86-3.05.86-2.34 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.96 10.71A5.42 5.42 0 0 1 3.68 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.04l3-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58A8.64 8.64 0 0 0 9 0 9 9 0 0 0 .96 4.96l3 2.33C4.67 5.16 6.66 3.58 9 3.58z"/></svg>`;
+const googleButtonHTML = () => `<button class="google-auth-btn" type="button" onclick="startGoogle('login')">${GOOGLE_MARK}Google로 계속하기</button>`;
+async function startGoogle(mode) {
+  profileOpen = false; renderAuth();
   try {
-    setAuth(await api('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ login_id: document.getElementById('au-id').value, password: document.getElementById('au-pw').value }) }));
+    const result = await api('/api/auth/google/start', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, return_to: location.pathname + location.search }) });
+    location.href = result.url;
+  } catch (e) { toast(e.detail || 'Google 로그인을 시작하지 못했습니다.'); }
+}
+async function doLogin() {
+  const loginId = document.getElementById('au-id').value.trim();
+  const password = document.getElementById('au-pw').value;
+  if (!loginId || !password) return toast('아이디와 비밀번호를 입력하세요.');
+  try {
+    const result = await api('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login_id: loginId, password }) });
+    closeModal(); setAuth(result);
   } catch (e) { toast(e.detail || '로그인 실패'); }
 }
-function doRegister() {
-  showModal(() => `<h3 style="margin-bottom:10px">회원가입</h3>
-    <input class="inline-edit" id="reg-id" placeholder="아이디" onblur="checkLoginId()">
-    <div id="reg-id-msg" class="hint" style="height:18px;margin:3px 0 5px"></div>
-    <input class="inline-edit" id="reg-name" placeholder="표시 이름">
-    <input class="inline-edit" id="reg-pw" type="password" minlength="8" placeholder="비밀번호 (8자 이상)"
-      style="margin-top:8px" onkeydown="if(event.key==='Enter')submitRegister()">
-    <p class="hint" style="margin:6px 0 0">아이디는 로그인에 사용하며, 표시 이름은 다른 사용자에게 보입니다.</p>
-    <div class="btnrow"><button class="btn primary" onclick="submitRegister()">가입 신청</button>
-      <button class="btn" onclick="closeModal()">취소</button></div>`);
-  setTimeout(() => document.getElementById('reg-id')?.focus(), 50);
+function authModalHTML(mode) {
+  const login = mode === 'login';
+  return `<div class="auth-card">
+    <button class="auth-close" onclick="closeModal()" aria-label="닫기">&times;</button>
+    <h2 class="auth-title">Olgae에 오신 것을 환영합니다.</h2>
+    ${googleButtonHTML()}<div class="auth-divider">또는</div>
+    ${login ? `<form class="auth-form" onsubmit="event.preventDefault();doLogin()">
+      <label class="auth-field">아이디
+        <input type="text" id="au-id" autocomplete="username" placeholder="아이디를 입력하세요" required>
+      </label>
+      <label class="auth-field">비밀번호
+        <input type="password" id="au-pw" autocomplete="current-password" placeholder="비밀번호를 입력하세요" required>
+      </label>
+      <button class="btn primary auth-submit" type="submit">로그인</button>
+    </form>
+    <p class="auth-switch">계정이 없으신가요? <button onclick="openAuthModal('register')">회원가입</button></p>`
+    : `<form class="auth-form" onsubmit="event.preventDefault();submitRegister()">
+      <label class="auth-field">아이디
+        <input type="text" id="reg-id" autocomplete="username" placeholder="로그인에 사용할 아이디" required onblur="checkLoginId()">
+      </label>
+      <div id="reg-id-msg" class="hint" style="min-height:18px;margin-top:-12px"></div>
+      <label class="auth-field">닉네임
+        <input type="text" id="reg-name" autocomplete="nickname" placeholder="사용할 닉네임" required>
+      </label>
+      <label class="auth-field">비밀번호
+        <input type="password" id="reg-pw" autocomplete="new-password" minlength="8" placeholder="8자 이상 입력하세요" required>
+      </label>
+      <button class="btn primary auth-submit" type="submit">가입 신청</button>
+    </form>
+    <p class="auth-switch">이미 계정이 있으신가요? <button onclick="openAuthModal('login')">로그인</button></p>`}
+  </div>`;
 }
+function openAuthModal(mode = 'login') {
+  showModal(() => authModalHTML(mode), 'auth-modal');
+  setTimeout(() => document.getElementById(mode === 'login' ? 'au-id' : 'reg-id')?.focus(), 50);
+}
+const doRegister = () => openAuthModal('register');
 async function checkLoginId() {
   const id = document.getElementById('reg-id').value.trim();
   const msg = document.getElementById('reg-id-msg');
@@ -770,7 +843,7 @@ async function submitRegister() {
   const loginId = document.getElementById('reg-id').value.trim();
   const displayName = document.getElementById('reg-name').value.trim();
   const password = document.getElementById('reg-pw').value;
-  if (!loginId || !displayName) return toast('아이디와 표시 이름을 입력하세요.');
+  if (!loginId || !displayName) return toast('아이디와 닉네임을 입력하세요.');
   if (password.length < 8) return toast('비밀번호는 8자 이상이어야 합니다.');
   try {
     const r = await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2314,11 +2387,11 @@ function goProjects() {
 }
 // 내 등급·용량·프로필을 다시 받는다. 실패해도 화면은 그대로 그린다
 async function refreshMe() {
-  if (!auth || shareToken) return;
+  if (shareToken) return;
   try {
     const m = await api('/api/me');
     profile = m;
-    auth = { ...auth, id: m.id, login_id: m.login_id, display_name: m.display_name, role: m.role };
+    auth = { id: m.id, login_id: m.login_id, display_name: m.display_name, role: m.role };
     localStorage.setItem('auth', JSON.stringify(auth));
     renderAuth();
   } catch (e) {
@@ -3985,16 +4058,25 @@ function expandSubtree(id) {
 function expandAll() { collapsed = new Set(); render(); }
 
 async function boot() {
-  if (auth) {                      // 저장된 세션의 등급을 새로 받아온다 (관리자 메뉴 표시 판단)
-    try {
-      const m = await api('/api/me');
-      profile = m;                 // 헤더 아이콘이 기본 아이콘으로 남지 않게 미리 채운다
-      auth = { ...auth, id: m.id, login_id: m.login_id, display_name: m.display_name, role: m.role };
-      localStorage.setItem('auth', JSON.stringify(auth));
-      renderAuth();
-    } catch (e) {
-      if (String(e.message) === '401') { auth = null; localStorage.removeItem('auth'); renderAuth(); }
-    }
+  // 쿠키가 인증의 기준이다. 새 탭과 Google callback 뒤에도 서버에서 계정을 복원한다.
+  await refreshMe();
+  const googleResult = new URLSearchParams(location.search).get('google');
+  if (googleResult) {
+    const messages = {
+      authenticated: 'Google 계정으로 로그인했습니다.', linked: 'Google 계정을 연결했습니다.',
+      pending: '가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.',
+      'link-required': '같은 아이디가 이미 있습니다. 일반 로그인 후 프로필에서 Google 계정을 연결하세요.',
+      'signup-closed': '지금은 신규 가입을 받지 않습니다.',
+      'already-connected': '이미 다른 Google 계정이 연결되어 있습니다.',
+      'already-linked': '해당 Google 계정은 이미 다른 사용자에게 연결되어 있습니다.',
+      blocked: '이 계정은 사용할 수 없습니다. 관리자에게 문의하세요.',
+      'login-required': '계정 연결을 완료하려면 다시 로그인하세요.',
+      cancelled: 'Google 로그인을 취소했습니다.', 'invalid-state': 'Google 로그인 요청이 만료되었습니다.',
+      failed: 'Google 로그인 확인에 실패했습니다.'
+    };
+    const clean = new URL(location.href); clean.searchParams.delete('google');
+    history.replaceState(null, '', clean.pathname + clean.search + clean.hash);
+    toast(messages[googleResult] || messages.failed);
   }
   if (shareToken) {
     try {
