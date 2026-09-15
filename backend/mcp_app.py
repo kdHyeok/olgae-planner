@@ -3,7 +3,7 @@
 사용자는 설치 없이 명령 한 줄로 등록한다:
   claude mcp add --transport http olgae-planner https://<호스트>/mcp -H "Authorization: Bearer <세션토큰>"
 
-인증은 요청마다 Authorization 헤더로 한다. API 토큰은 원문, OAuth 토큰은 해시로 저장하며,
+인증은 요청마다 Authorization 헤더로 한다. API·OAuth 토큰은 해시로 저장하며,
 권한 판정은 main.py 의 기존 핸들러(opt_user / check_access / check_owner)를 그대로 재사용한다.
 """
 
@@ -199,7 +199,7 @@ provider = OAuthProvider()
 
 server = MCPServer(
     "olgae-planner",
-    version="0.1.0",
+    version="0.1.1",
     instructions=(
         "PRD·기능명세서·작업을 읽고 고치는 툴이다. "
         "먼저 list_projects 로 slug 를 얻어 project_id 로 넘기고, get_spec 으로 전체를 읽는다. "

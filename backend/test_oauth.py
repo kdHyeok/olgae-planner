@@ -37,14 +37,47 @@ def run():
     verifier = secrets.token_urlsafe(48)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
     try:
+        unauthenticated = fetch("/mcp")
+        assert unauthenticated.status == 401
+        assert ('resource_metadata="' + main.PUBLIC_URL +
+                '/.well-known/oauth-protected-resource/mcp"') in unauthenticated.headers["WWW-Authenticate"]
+        protected = json.load(fetch("/.well-known/oauth-protected-resource/mcp"))
+        assert protected["resource"] == main.OAUTH_RESOURCE
+        assert protected["authorization_servers"] == [main.PUBLIC_URL]
+        metadata = json.load(fetch("/.well-known/oauth-authorization-server"))
+        assert metadata["code_challenge_methods_supported"] == ["S256"]
+        assert metadata["token_endpoint_auth_methods_supported"] == ["none"]
+
         with main.pool.connection() as conn, conn.cursor() as cur:
             cur.execute("""INSERT INTO users (username, login_id, display_name, password, role, status)
                            VALUES (%s, %s, 'OAuth 점검', %s, 'guest', 'active') RETURNING id""",
                         (login_id, login_id, main.hash_pw(password)))
             user_id = cur.fetchone()[0]
-            legacy_token = main.API_TOKEN_PREFIX + secrets.token_urlsafe(24)
-            cur.execute("INSERT INTO api_tokens (token, user_id, name) VALUES (%s, %s, 'OAuth 점검')",
-                        (legacy_token, user_id))
+
+        login_response = fetch("/api/auth/login", data=json.dumps({
+            "login_id": login_id, "password": password,
+        }).encode(), headers={"Content-Type": "application/json"})
+        assert login_response.status == 200
+        session_token = json.load(login_response)["token"]
+        issue_response = fetch("/api/me/tokens", data=b'{"name":"OAuth check"}', headers={
+            "Authorization": "Bearer " + session_token, "Content-Type": "application/json",
+        })
+        assert issue_response.status == 201
+        api_token = json.load(issue_response)["token"]
+        legacy_token = main.API_TOKEN_PREFIX + secrets.token_urlsafe(24)
+        with main.pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT token, token_hint FROM api_tokens WHERE user_id = %s", (user_id,))
+            stored_token, token_hint = cur.fetchone()
+            assert stored_token == main.token_hash(api_token)
+            assert token_hint == main.mask_api_token(api_token)
+            cur.execute("""INSERT INTO api_tokens (token, user_id, name)
+                           VALUES (%s, %s, 'Legacy OAuth check')""", (legacy_token, user_id))
+            main._migrate_api_tokens(cur)
+            cur.execute("SELECT token, token_hint FROM api_tokens WHERE name = 'Legacy OAuth check'")
+            stored_token, token_hint = cur.fetchone()
+            assert stored_token == main.token_hash(legacy_token)
+            assert token_hint == main.mask_api_token(legacy_token)
+        assert main.lookup_token_user(api_token)["id"] == user_id
 
         legacy_initialize = fetch("/mcp", data=json.dumps({
             "jsonrpc": "2.0", "id": 1, "method": "initialize",

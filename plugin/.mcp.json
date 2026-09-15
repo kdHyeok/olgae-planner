@@ -2,10 +2,7 @@
   "mcpServers": {
     "olgae-planner": {
       "type": "http",
-      "url": "${OLGAE_URL:-http://localhost:3000/mcp}",
-      "headers": {
-        "Authorization": "Bearer ${OLGAE_TOKEN}"
-      }
+      "url": "${OLGAE_URL:-https://prd.donhse.duckdns.org/mcp}"
     }
   }
 }

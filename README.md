@@ -199,8 +199,9 @@ docker compose up -d --build
 
 ## MCP 서버 (배포 서버가 제공)
 
-백엔드가 `/mcp` 에 HTTP MCP 를 함께 제공합니다. ChatGPT 는 **OAuth 2.1(PKCE)**, Claude/Codex 는
-**계정별 API 토큰**(`olg_…`)으로 붙습니다. 권한은 REST 와 같은 코드(`access_level`)로 판정하고,
+백엔드가 `/mcp` 에 HTTP MCP 를 함께 제공합니다. ChatGPT·Claude Code·Codex 플러그인은
+**OAuth 2.1(PKCE)** 로 붙고, 수동 MCP 연결은 **계정별 API 토큰**(`olg_…`)도 지원합니다.
+권한은 REST 와 같은 코드(`access_level`)로 판정하고,
 보이는 것은 그 계정이 만든 프로젝트 + 멤버로 참여중인 프로젝트입니다.
 
 ### ChatGPT 연결
@@ -227,12 +228,10 @@ Cursor·Claude Desktop 은 같은 창의 JSON(`{"mcpServers": {"olgae-planner": 
 
 ### 플러그인 (MCP + 작성 규칙 스킬)
 
-`plugin/` 에 Claude Code · Codex 매니페스트와 스킬 `olgae-planner` 가 있습니다. 주소·토큰은 환경변수로 받아
-한 플러그인으로 여러 서버를 씁니다.
+`plugin/` 에 Claude Code · Codex 매니페스트와 스킬 `olgae-planner` 가 있습니다. 기본 배포 서버에
+OAuth로 연결하므로 별도 토큰 환경변수는 필요 없습니다. 다른 서버는 `OLGAE_URL`로 바꿀 수 있습니다.
 
 ```bash
-export OLGAE_URL=https://<호스트>/mcp
-export OLGAE_TOKEN=olg_...
 claude plugin marketplace add kdHyeok/olgae-planner
 claude plugin install olgae-planner@olgae-planner
 ```
