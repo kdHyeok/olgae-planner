@@ -61,7 +61,8 @@ erDiagram
         timestamptz created_at "요청 시각"
     }
     api_tokens {
-        text token PK "MCP·플러그인 토큰 (olg_…)"
+        text token PK "MCP·플러그인 토큰 SHA-256 해시"
+        text token_hint "마스킹 표시값"
         serial id UK "목록·삭제용 번호"
         int user_id FK "소유 계정"
         text name "토큰 이름"
@@ -299,7 +300,8 @@ erDiagram
 
 | 컬럼 | 한글 이름 | 타입 | 키/제약 | 기본값 | 설명 |
 |---|---|---|---|---|---|
-| `token` | 토큰 | text | PK | | `olg_` + `secrets.token_urlsafe(24)`. 접두어로 세션 토큰과 구분 |
+| `token` | 토큰 해시 | text | PK | | `olg_` + 난수 원문 대신 SHA-256 해시 저장 |
+| `token_hint` | 표시값 | text | NN | `''` | 목록용 앞뒤 마스킹 값 (`olg_abcd…wxyz`) |
 | `id` | 번호 | serial | UK | 자동 증가 | 목록·삭제에 쓰는 값. 토큰 자체를 다시 내보내지 않으려고 둠 |
 | `user_id` | 소유 계정 | int | FK → users(id) CASCADE, NN | | |
 | `name` | 토큰 이름 | text | NN | `'플러그인'` | 기기·용도 구분용 |
@@ -309,6 +311,7 @@ erDiagram
 `opt_user()` 가 `Bearer` 값의 접두어를 보고 `api_tokens`(olg_…), `oauth_tokens`(olgo_…),
 `sessions` 중 어디를 볼지 고릅니다. 브라우저는 세션을 HttpOnly 쿠키로 보내고,
 기존 API 클라이언트는 세션 Bearer 토큰도 사용할 수 있습니다.
+API 토큰도 조회 전에 SHA-256 해시하며, 기존 원문 행은 기동 시 해시와 마스킹 표시값으로 이관합니다.
 브라우저 로그아웃은 `sessions` 만 지우므로 플러그인은 계속 동작하고,
 관리자 비밀번호 재설정은 두 테이블을 함께 지웁니다.
 

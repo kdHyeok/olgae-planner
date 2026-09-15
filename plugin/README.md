@@ -5,29 +5,19 @@ PRD & 기능명세서 서비스를 AI 에이전트에 붙이는 플러그인. �
 - **MCP 서버 연결** — 배포 서버의 `/mcp` 엔드포인트(툴 18개: 명세 조회·수정, 표(정책·요구사항·작업) 행 검색·추가·수정, 용어 사전, 버전, 코멘트)
 - **스킬** `olgae-planner` — 이 서비스의 작성 컨벤션과 산출물 규칙([skills/olgae-planner/SKILL.md](skills/olgae-planner/SKILL.md))
 
-## 준비: 계정과 토큰
+## 준비: 계정
 
-이 플러그인에는 서버 주소도 토큰도 들어 있지 않다. 각자 **자기 배포 서버 주소**와
-**자기 계정의 API 토큰**을 환경변수로 넣어 쓴다. 그래서 하나의 플러그인으로 여러 서버를 쓸 수 있다.
+기본 배포 서버(`https://prd.donhse.duckdns.org/mcp`)에 OAuth 2.1로 연결한다.
+플러그인을 설치한 뒤 처음 사용할 때 브라우저에서 서비스 계정으로 로그인하고 승인하면 된다.
+`OLGAE_TOKEN` 환경변수는 필요 없다.
 
 1. 서비스에 계정을 만든다 (가입은 관리자 승인 후 사용 가능).
-2. 로그인해서 헤더 메뉴 → **플러그인 설치** → `+ 새 토큰 발급`.
-   전체 값은 그 자리에서 한 번만 보이니 복사해 둔다. 목록에는 앞뒤만 남는다.
-3. 환경변수로 둔다. 설정 파일에 토큰을 적지 않아도 된다.
+2. 플러그인을 설치하고 처음 툴을 호출할 때 OAuth 연결을 승인한다.
 
-```bash
-export OLGAE_URL=https://<호스트>/mcp     # 생략하면 http://localhost:3000/mcp
-export OLGAE_TOKEN=olg_...
-```
+다른 배포 서버를 쓸 때만 `OLGAE_URL=https://<호스트>/mcp`를 설정한다. 그 서버도 OAuth discovery와
+`PUBLIC_URL` 설정이 올바르게 배포되어 있어야 한다.
 
-Windows PowerShell:
-
-```powershell
-$env:OLGAE_URL  = "https://<호스트>/mcp"
-$env:OLGAE_TOKEN = "olg_..."
-```
-
-토큰으로 보이는 것은 **그 계정이 만든 프로젝트 + 멤버로 참여중인 프로젝트**다.
+연결한 계정으로 보이는 것은 **그 계정이 만든 프로젝트 + 멤버로 참여중인 프로젝트**다.
 할 수 있는 일은 화면에서와 똑같이 프로젝트별 권한을 따른다 —
 편집자는 내용 수정·버전, 공동 소유자는 공유 링크·멤버 관리까지, 소유자만 프로젝트 삭제.
 
@@ -71,13 +61,13 @@ claude plugin install olgae-planner@olgae-planner
 > 저장소가 **private** 이어도 소유자·협업자는 로컬 git 자격증명으로 clone 되어 GitHub 소스가 등록된다.
 > 하지만 **다른 사람은 public 이어야** 등록할 수 있다.
 
-등록 뒤 Claude Code 를 재시작하고 `/mcp` 로 연결(`plugin:olgae-planner:olgae-planner`),
+등록 뒤 Claude Code 를 재시작하고 `/mcp` 로 OAuth 연결(`plugin:olgae-planner:olgae-planner`),
 `/plugin` 으로 스킬 `olgae-planner` 을 확인한다.
 
 > `claude mcp add` 로 같은 이름(`olgae-planner`)을 이미 등록해 뒀다면 그쪽이 플러그인 설정을 가린다.
 > 플러그인 쪽을 쓰려면 수동 등록을 지운다: `claude mcp remove olgae-planner`.
-> 목록에 `Connected` 로 떠도 토큰 검사는 통과한 게 아니다(연결 단계에는 인증이 필요 없다).
-> 실제 권한은 툴을 한 번 호출해 봐야 알 수 있다.
+> 기존 버전에 `Authorization` 헤더가 남아 있으면 OAuth가 시작되지 않는다. 마켓플레이스를 갱신한 뒤
+> Claude Code를 재시작하고 실제로 `list_projects`를 호출해 확인한다.
 
 ## Codex
 
@@ -101,6 +91,8 @@ ChatGPT 는 이 저장소도 `OLGAE_TOKEN` 도 쓰지 않는다. 새 플러그�
 인증을 **OAuth** 로 고르면 처음 쓸 때 로그인·승인 화면이 열린다. DCR·PKCE(S256)·토큰 갱신은 서버가 처리한다.
 
 ## MCP 만 붙이기 (플러그인 없이)
+
+브라우저 OAuth 대신 API 토큰을 쓰고 싶다면 서비스의 **플러그인 설치** 창에서 토큰을 발급해 수동 등록한다.
 
 ```bash
 claude mcp add --transport http olgae-planner https://<호스트>/mcp -H "Authorization: Bearer olg_..."

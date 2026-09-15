@@ -101,6 +101,7 @@ def init_db():
             -- MCP·플러그인용 토큰. 브라우저 세션과 분리해 로그아웃해도 살아 있다
             CREATE TABLE IF NOT EXISTS api_tokens (
                 token text PRIMARY KEY,
+                token_hint text NOT NULL DEFAULT '',
                 user_id int NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 name text NOT NULL DEFAULT '플러그인',
                 created_at timestamptz NOT NULL DEFAULT now(),
@@ -298,6 +299,7 @@ def init_db():
                 ON google_oauth_states (user_id);
             -- 목록·삭제에 쓰는 번호. 토큰 값 자체를 다시 내보내지 않으려고 둔다
             ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS id serial;
+            ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS token_hint text NOT NULL DEFAULT '';
             -- 예전 'viewer' 멤버 등급은 없어졌다. 읽기 전용은 이제 공유 링크 상태이지 멤버가 아니다
             -- CREATE TABLE IF NOT EXISTS 로는 기존 테이블의 기본값이 바뀌지 않는다
             ALTER TABLE project_members ALTER COLUMN role SET DEFAULT 'editor';
@@ -319,6 +321,8 @@ def init_db():
             DELETE FROM oauth_tokens WHERE refresh_expires_at < now();
             DELETE FROM google_oauth_states WHERE expires_at < now();
         """)
+
+        _migrate_api_tokens(cur)
 
         # ---- 컬렉션(커스텀 표)·번호 체계. 설계는 docs/PLAN-collections.md §4 ----
         cur.execute("""
@@ -591,6 +595,19 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def mask_api_token(token: str) -> str:
+    return token[:len(API_TOKEN_PREFIX) + 4] + "\u2026" + token[-4:]
+
+
+def _migrate_api_tokens(cur):
+    """예전 API 토큰 원문을 해시로 바꾼다. 사용자가 가진 값은 그대로 동작한다."""
+    cur.execute("SELECT token FROM api_tokens WHERE left(token, %s) = %s",
+                (len(API_TOKEN_PREFIX), API_TOKEN_PREFIX))
+    for raw_token, in cur.fetchall():
+        cur.execute("UPDATE api_tokens SET token = %s, token_hint = %s WHERE token = %s",
+                    (token_hash(raw_token), mask_api_token(raw_token), raw_token))
+
+
 def lookup_token_user(tok: str) -> dict | None:
     """브라우저 세션·API 토큰·OAuth access token을 한 곳에서 검증한다."""
     with pool.connection() as conn, conn.cursor() as cur:
@@ -612,14 +629,15 @@ def lookup_token_user(tok: str) -> dict | None:
                 auth = {"client_id": row[5], "scopes": row[6],
                         "expires_at": int(row[7]), "resource": row[8]}
         elif tok.startswith(API_TOKEN_PREFIX):
+            digest = token_hash(tok)
             cur.execute("""SELECT u.id, u.login_id, u.display_name, u.role, u.status FROM api_tokens t
-                           JOIN users u ON u.id = t.user_id WHERE t.token = %s""", (tok,))
+                           JOIN users u ON u.id = t.user_id WHERE t.token = %s""", (digest,))
             row = cur.fetchone()
             if row:
                 # 마지막 사용 시각은 한 시간에 한 번만 적는다 (요청마다 쓰면 낭비)
                 cur.execute("""UPDATE api_tokens SET last_used_at = now() WHERE token = %s
                                AND (last_used_at IS NULL
-                                    OR last_used_at < now() - interval '1 hour')""", (tok,))
+                                    OR last_used_at < now() - interval '1 hour')""", (digest,))
         else:
             cur.execute("""SELECT u.id, u.login_id, u.display_name, u.role, u.status,
                                   s.csrf_token_hash
@@ -1196,16 +1214,14 @@ class TokenIn(BaseModel):
 
 def token_row(r: dict) -> dict:
     """목록에는 앞뒤만 보여 준다. 전체 값은 발급할 때 한 번만 돌려준다."""
-    t = r["token"]
     return {"id": r["id"], "name": r["name"], "created_at": r["created_at"],
-            "last_used_at": r["last_used_at"],
-            "masked": t[:len(API_TOKEN_PREFIX) + 4] + "\u2026" + t[-4:]}
+            "last_used_at": r["last_used_at"], "masked": r["token_hint"]}
 
 
 @app.get("/api/me/tokens")
 def list_tokens(user: dict = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT id, token, name, created_at, last_used_at
+        cur.execute("""SELECT id, token_hint, name, created_at, last_used_at
                        FROM api_tokens WHERE user_id = %s ORDER BY created_at""",
                     (user["id"],))
         return [token_row(r) for r in rows_to_dicts(cur)]
@@ -1220,9 +1236,11 @@ def create_token(body: TokenIn, user: dict = Depends(current_user)):
         cur.execute("SELECT count(*) FROM api_tokens WHERE user_id = %s", (user["id"],))
         if cur.fetchone()[0] >= 10:
             raise HTTPException(403, "토큰은 10개까지 만들 수 있습니다. 쓰지 않는 토큰을 지우세요.")
-        cur.execute("""INSERT INTO api_tokens (token, user_id, name) VALUES (%s, %s, %s)
-                       RETURNING token, name, created_at""", (tok, user["id"], name))
-        return rows_to_dicts(cur)[0]
+        cur.execute("""INSERT INTO api_tokens (token, token_hint, user_id, name)
+                       VALUES (%s, %s, %s, %s) RETURNING id, name, created_at""",
+                    (token_hash(tok), mask_api_token(tok), user["id"], name))
+        result = rows_to_dicts(cur)[0]
+        return {**result, "token": tok}
 
 
 @app.delete("/api/me/tokens/{tid}", status_code=204)
