@@ -115,6 +115,7 @@ def run():
         assert login_page.status == 200
         login_html = login_page.read().decode()
         assert "form-action 'self' https://chatgpt.com" in login_page.headers["Content-Security-Policy"]
+        assert "https://accounts.google.com" in login_page.headers["Content-Security-Policy"]
         assert "Google로 계속하기" in login_html
         assert f'name="request_id" value="{request_id}"' in login_html
         callback = form("/oauth/login", {
