@@ -116,7 +116,10 @@ def run():
         login_html = login_page.read().decode()
         assert "form-action 'self' https://chatgpt.com" in login_page.headers["Content-Security-Policy"]
         assert "https://accounts.google.com" in login_page.headers["Content-Security-Policy"]
+        assert "<h1>Olgae 플래너 연결</h1>" in login_html
         assert "Google로 계속하기" in login_html
+        assert 'class="google-logo"' in login_html
+        assert "비밀번호는 얼개 플래너에서만 확인하며" not in login_html
         assert f'name="request_id" value="{request_id}"' in login_html
         callback = form("/oauth/login", {
             "request_id": request_id, "login_id": login_id, "password": password,

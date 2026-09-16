@@ -2899,20 +2899,24 @@ main{{max-width:420px;margin:10vh auto;padding:28px;background:white;border:1px 
 h1{{font-size:24px;margin:0 0 10px}} p{{line-height:1.55;color:#666}}
 label{{display:block;margin:16px 0 6px;font-weight:650}} input{{box-sizing:border-box;width:100%;padding:12px;border:1px solid #bbb;border-radius:9px;font-size:16px}}
 button{{width:100%;margin-top:22px;padding:12px;border:0;border-radius:9px;background:#242424;color:white;font-size:16px;font-weight:700;cursor:pointer}}
-.google{{margin-top:16px;background:white;color:#202124;border:1px solid #bbb}} .or{{display:flex;align-items:center;gap:10px;margin:18px 0;color:#888}}
+.google{{margin-top:16px;background:white;color:#202124;border:1px solid #bbb;display:flex;align-items:center;justify-content:center;gap:10px}}
+.google-logo{{width:18px;height:18px;flex:none}} .or{{display:flex;align-items:center;gap:10px;margin:18px 0;color:#888}}
 .or::before,.or::after{{content:"";height:1px;background:#ddd;flex:1}} .client{{color:#202124;font-weight:700}} .error{{padding:10px;border-radius:8px;background:#fff0ef;color:#b42318}}
-small{{display:block;margin-top:14px;color:#777;line-height:1.45}}
-</style></head><body><main><h1>얼개 플래너 연결</h1>
+</style></head><body><main><h1>Olgae 플래너 연결</h1>
 <p><span class="client">{safe_client}</span>에서 내 프로젝트를 읽고 편집하도록 승인합니다.</p>
 {error_html}<form method="get" action="/oauth/google/start">
 <input type="hidden" name="request_id" value="{safe_request}">
-<button class="google" type="submit">Google로 계속하기</button></form>
+<button class="google" type="submit"><svg class="google-logo" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+<path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.51h6.45a5.52 5.52 0 0 1-2.39 3.52v2.93h3.87c2.27-2.09 3.56-5.17 3.56-8.69Z"/>
+<path fill="#34A853" d="M12 24c3.24 0 5.95-1.07 7.93-2.91l-3.87-2.93c-1.07.72-2.44 1.15-4.06 1.15-3.13 0-5.78-2.11-6.73-4.95H1.28v3.04A12 12 0 0 0 12 24Z"/>
+<path fill="#FBBC05" d="M5.27 14.36A7.22 7.22 0 0 1 4.89 12c0-.82.14-1.61.38-2.36V6.6H1.28A12 12 0 0 0 0 12c0 1.94.46 3.77 1.28 5.4l3.99-3.04Z"/>
+<path fill="#EA4335" d="M12 4.69c1.76 0 3.34.61 4.59 1.8l3.43-3.43A11.5 11.5 0 0 0 12 0 12 12 0 0 0 1.28 6.6l3.99 3.04C6.22 6.8 8.87 4.69 12 4.69Z"/>
+</svg><span>Google로 계속하기</span></button></form>
 <div class="or">또는</div><form method="post" action="/oauth/login">
 <input type="hidden" name="request_id" value="{safe_request}">
 <label for="login_id">아이디</label><input id="login_id" name="login_id" autocomplete="username" required maxlength="200">
 <label for="password">비밀번호</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1000">
 <button type="submit">로그인하고 연결 승인</button></form>
-<small>비밀번호는 얼개 플래너에서만 확인하며 ChatGPT나 Codex에 전달하지 않습니다.</small>
 </main></body></html>"""
     return HTMLResponse(body, status_code=status, headers={
         "Cache-Control": "no-store", "Pragma": "no-cache",
