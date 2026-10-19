@@ -25,7 +25,7 @@ test('로그아웃 헤더는 단일 버튼으로 인증 모달을 연다', () =>
 
 test('설치형 플러그인은 빈 Bearer 헤더 없이 배포 서버 OAuth를 사용한다', () => {
   for (const config of [mcp, claudeMcp]) {
-    assert.equal(config.url, '${OLGAE_URL:-https://prd.donhse.duckdns.org/mcp}');
+    assert.equal(config.url, '${OLGAE_URL:-https://prd.donyk.link/mcp}');
     assert.equal(config.headers, undefined);
   }
   assert.match(html, /별도 토큰은 필요 없습니다/);

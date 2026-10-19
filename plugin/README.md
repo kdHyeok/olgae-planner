@@ -7,7 +7,7 @@ PRD & 기능명세서 서비스를 AI 에이전트에 붙이는 플러그인. �
 
 ## 준비: 계정
 
-기본 배포 서버(`https://prd.donhse.duckdns.org/mcp`)에 OAuth 2.1로 연결한다.
+기본 배포 서버(`https://prd.donyk.link/mcp`)에 OAuth 2.1로 연결한다.
 플러그인을 설치한 뒤 처음 사용할 때 브라우저에서 Google 또는 서비스 아이디·비밀번호로 로그인하고 승인하면 된다.
 `OLGAE_TOKEN` 환경변수는 필요 없다.
 
@@ -89,6 +89,11 @@ PRD·기능명세서 내용을 쓰거나 고칠 때는 `plugin/skills/olgae-plan
 
 ChatGPT 는 이 저장소도 `OLGAE_TOKEN` 도 쓰지 않는다. 새 플러그인의 서버 URL 에 `<PUBLIC_URL>/mcp` 를 넣고
 인증을 **OAuth** 로 고르면 처음 쓸 때 로그인·승인 화면이 열린다. DCR·PKCE(S256)·토큰 갱신은 서버가 처리한다.
+
+운영 MCP URL은 `https://prd.donyk.link/mcp`다. 기존 도메인으로 등록했다면 ChatGPT의 연결 설정도
+새 주소로 갱신하고 다시 승인한다. URL 수정이 불가능하면 새 custom MCP 서버를 등록한다.
+저장소의 플러그인 설정 변경이 기존 ChatGPT 연결에 자동 반영되는 것은 아니다.
+Claude/Codex는 플러그인을 업데이트한 뒤 OAuth를 다시 연결한다. 수동 API 토큰 연결은 URL만 갱신하면 된다.
 
 ## MCP 만 붙이기 (플러그인 없이)
 

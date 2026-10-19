@@ -41,7 +41,30 @@ LOGIN_FAIL_WINDOW_MIN = 10       # 이 시간 안의 실패만 이어서 센다
 LOGIN_LOCK_STEPS = [30, 60, 180, 300, 600, 1800]   # 잠금이 반복될수록 길어진다(초)
 LOGIN_LOCK_RESET_H = 24          # 이만큼 조용하면 잠금 단계가 처음으로 돌아간다
 PASSWORD_MIN = 8
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:3000").rstrip("/")
+def normalize_public_url(value: str) -> str:
+    """OAuth 식별자는 요청 헤더 대신 검증된 단일 origin에서 파생한다."""
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("PUBLIC_URL must be an HTTPS origin") from exc
+    if (not value or value != value.strip() or any(c.isspace() for c in value)
+            or "\\" in value or "?" in value or "#" in value
+            or not parsed.hostname or parsed.username is not None
+            or parsed.password is not None or parsed.path not in ("", "/")):
+        raise ValueError("PUBLIC_URL must be an origin without credentials, path, query or fragment")
+    host = parsed.hostname.lower()
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host):
+        raise ValueError("PUBLIC_URL contains an invalid hostname")
+    if parsed.scheme == "http" and host in {"localhost", "127.0.0.1"} and port == 3000:
+        return f"http://{host}:3000"
+    if parsed.scheme != "https" or port not in (None, 443):
+        raise ValueError("PUBLIC_URL must use HTTPS on port 443 (local HTTP port 3000 is allowed)")
+    return f"https://{host}"
+
+
+PUBLIC_URL = normalize_public_url(os.environ.get("PUBLIC_URL", "http://localhost:3000"))
+PUBLIC_HOST = urlsplit(PUBLIC_URL).netloc
 OAUTH_RESOURCE = PUBLIC_URL + "/mcp"
 OAUTH_SCOPE = "mcp"
 OAUTH_ACCESS_PREFIX = "olgo_"
@@ -51,11 +74,9 @@ CSRF_COOKIE = "olgae_csrf"
 COOKIE_SECURE = PUBLIC_URL.startswith("https://")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
-GOOGLE_ORIGINS = {
-    "localhost:3000": "http://localhost:3000",
-    "prd.donhse.duckdns.org": "https://prd.donhse.duckdns.org",
-    "prd.donhse.duckdns.org:443": "https://prd.donhse.duckdns.org",
-}
+GOOGLE_ORIGINS = {PUBLIC_HOST: PUBLIC_URL}
+if COOKIE_SECURE:
+    GOOGLE_ORIGINS[PUBLIC_HOST + ":443"] = PUBLIC_URL
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -979,7 +1000,7 @@ def google_configured():
 
 
 def google_redirect_uri(request: Request) -> str:
-    """요청 Host를 등록된 두 origin 중 하나로만 매핑한다."""
+    """요청 Host/Origin이 설정된 canonical origin일 때만 callback을 만든다."""
     origin = GOOGLE_ORIGINS.get(request.headers.get("host", "").lower())
     request_origin = request.headers.get("origin", "").rstrip("/")
     if not origin or (request_origin and request_origin != origin):

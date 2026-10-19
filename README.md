@@ -114,8 +114,8 @@ docker compose up -d --build
 - OAuth 공개 주소: `PUBLIC_URL` (기본값 `http://localhost:3000`). 외부에 배포하면
   `.env` 에 `PUBLIC_URL=https://실제-도메인` 을 반드시 지정합니다. HTTPS 주소와 `/mcp` 외부 경로가 실제 접속 주소와 같아야 합니다
 - Google 로그인: `.env`에 Google Cloud에서 발급한 `GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`을 지정합니다.
-  Google callback은 요청 Host를 허용 목록과 비교해 운영에서는
-  `https://prd.donhse.duckdns.org/api/auth/google/callback`, 로컬에서는
+  Google callback은 `PUBLIC_URL`에서 파생하고 요청 Host·Origin이 일치하는지 검증합니다. 운영에서는
+  `https://prd.donyk.link/api/auth/google/callback`, 로컬에서는 `PUBLIC_URL=http://localhost:3000`으로 설정해
   `http://localhost:3000/api/auth/google/callback`을 사용합니다. 로컬 Google 로그인은 `127.0.0.1` 대신 `localhost`로 접속합니다.
 - DB 계정/비밀번호: `.env` 의 `POSTGRES_USER`·`POSTGRES_PASSWORD`·`POSTGRES_DB`
   (`DATABASE_URL` 은 compose 가 이 값들로 조립합니다. 기존 볼륨의 비밀번호는 최초 생성 시점에 정해지므로,
@@ -211,6 +211,15 @@ docker compose up -d --build
 
 DCR 로 공개 클라이언트가 등록되고, access 1시간 · refresh 30일(갱신 때 둘 다 회전), DB 에는 해시만 저장.
 discovery 는 `/.well-known/oauth-protected-resource/mcp` · `/.well-known/oauth-authorization-server`.
+
+운영 MCP 주소는 `https://prd.donyk.link/mcp`입니다. 배포 설정은
+`PUBLIC_URL=https://prd.donyk.link`, `MCP_ALLOWED_HOSTS=prd.donyk.link,localhost:3000,127.0.0.1:3000`을 사용합니다.
+공개 주소는 경로·쿼리·계정정보가 없는 HTTPS origin이어야 하며, 잘못된 값이면 기동을 거부합니다.
+
+도메인 변경 후 기존 OAuth 연결은 재승인이 필요합니다. ChatGPT에 저장된 MCP 서버 URL도 새 주소로 변경하고,
+수정이 불가능하면 새 OAuth 연결을 만든 뒤 기존 연결을 제거합니다. Claude/Codex 플러그인은 업데이트 후 재연결합니다.
+이전 resource의 access·refresh 토큰과 인증 코드는 새 resource에서 거부하며, API 토큰(`olg_…`)은 유지됩니다.
+Google Cloud에는 `https://prd.donyk.link/api/auth/google/callback`을 정확히 등록합니다.
 
 ### API 토큰 방식
 
