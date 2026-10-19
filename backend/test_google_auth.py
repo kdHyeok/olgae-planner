@@ -3,6 +3,7 @@
 import os
 import secrets
 from types import SimpleNamespace
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 os.environ["PUBLIC_URL"] = "http://localhost:3000"
@@ -38,11 +39,15 @@ def run():
         local_request = SimpleNamespace(headers={
             "host": "localhost:3000", "origin": "http://localhost:3000"
         })
-        prod_request = SimpleNamespace(headers={"host": "prd.donhse.duckdns.org"})
         assert main.google_redirect_uri(local_request) == \
             "http://localhost:3000/api/auth/google/callback"
-        assert main.google_redirect_uri(prod_request) == \
-            "https://prd.donhse.duckdns.org/api/auth/google/callback"
+        with patch.dict(main.GOOGLE_ORIGINS, {
+            "prd.donyk.link": "https://prd.donyk.link",
+            "prd.donyk.link:443": "https://prd.donyk.link",
+        }, clear=True):
+            prod_request = SimpleNamespace(headers={"host": "prd.donyk.link"})
+            assert main.google_redirect_uri(prod_request) == \
+                "https://prd.donyk.link/api/auth/google/callback"
         try:
             main.google_redirect_uri(SimpleNamespace(headers={"host": "evil.example"}))
         except HTTPException as exc:

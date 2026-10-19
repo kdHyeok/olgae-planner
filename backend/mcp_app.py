@@ -124,8 +124,9 @@ class OAuthProvider:
         with main.pool.connection() as conn, conn.cursor() as cur:
             cur.execute("""SELECT scopes, extract(epoch from expires_at), code_challenge,
                                   redirect_uri, redirect_uri_provided_explicitly, resource, user_id
-                           FROM oauth_codes WHERE code_hash = %s AND client_id = %s""",
-                        (main.token_hash(authorization_code), client.client_id))
+                           FROM oauth_codes WHERE code_hash = %s AND client_id = %s
+                             AND resource = %s""",
+                        (main.token_hash(authorization_code), client.client_id, main.OAUTH_RESOURCE))
             row = cur.fetchone()
         if not row:
             return None
@@ -152,8 +153,9 @@ class OAuthProvider:
                                           authorization_code: AuthorizationCode) -> OAuthToken:
         with main.pool.connection() as conn, conn.cursor() as cur:
             cur.execute("""DELETE FROM oauth_codes WHERE code_hash = %s AND client_id = %s
-                           AND expires_at > now() RETURNING user_id, scopes, resource""",
-                        (main.token_hash(authorization_code.code), client.client_id))
+                           AND expires_at > now() AND resource = %s
+                           RETURNING user_id, scopes, resource""",
+                        (main.token_hash(authorization_code.code), client.client_id, main.OAUTH_RESOURCE))
             row = cur.fetchone()
             if not row:
                 raise TokenError("invalid_grant", "Authorization code is invalid or expired")
@@ -165,8 +167,9 @@ class OAuthProvider:
             cur.execute("""SELECT t.scopes, extract(epoch from t.refresh_expires_at), t.user_id
                            FROM oauth_tokens t JOIN users u ON u.id = t.user_id
                            WHERE t.refresh_token_hash = %s AND t.client_id = %s
-                             AND t.refresh_expires_at > now() AND u.status = 'active'""",
-                        (main.token_hash(refresh_token), client.client_id))
+                             AND t.refresh_expires_at > now() AND u.status = 'active'
+                             AND t.resource = %s""",
+                        (main.token_hash(refresh_token), client.client_id, main.OAUTH_RESOURCE))
             row = cur.fetchone()
         return (RefreshToken(token=refresh_token, client_id=client.client_id, scopes=row[0],
                              expires_at=int(row[1]), subject=str(row[2])) if row else None)
@@ -175,8 +178,9 @@ class OAuthProvider:
                                      refresh_token: RefreshToken, scopes: list[str]) -> OAuthToken:
         with main.pool.connection() as conn, conn.cursor() as cur:
             cur.execute("""DELETE FROM oauth_tokens WHERE refresh_token_hash = %s AND client_id = %s
-                           AND refresh_expires_at > now() RETURNING user_id, resource""",
-                        (main.token_hash(refresh_token.token), client.client_id))
+                           AND refresh_expires_at > now() AND resource = %s
+                           RETURNING user_id, resource""",
+                        (main.token_hash(refresh_token.token), client.client_id, main.OAUTH_RESOURCE))
             row = cur.fetchone()
             if not row:
                 raise TokenError("invalid_grant", "Refresh token is invalid or expired")
@@ -512,7 +516,9 @@ def asgi_app():
     # MCP_ALLOWED_HOSTS 를 주면 그 목록만 허용하고(권장), 비어 있으면 검사를 끈다.
     # 인증은 요청마다 Authorization 헤더로 하므로 이 검사는 DNS 리바인딩 방어용이다.
     allowed = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
-    security = (TransportSecuritySettings(allowed_hosts=allowed, allowed_origins=allowed)
+    origins = ["https://" + h for h in allowed]
+    origins += ["http://" + h for h in allowed if h in {"localhost:3000", "127.0.0.1:3000"}]
+    security = (TransportSecuritySettings(allowed_hosts=allowed, allowed_origins=origins)
                 if allowed else
                 TransportSecuritySettings(enable_dns_rebinding_protection=False,
                                           allowed_hosts=[], allowed_origins=[]))

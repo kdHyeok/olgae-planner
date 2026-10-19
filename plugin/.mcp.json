@@ -2,7 +2,7 @@
   "mcpServers": {
     "olgae-planner": {
       "type": "http",
-      "url": "${OLGAE_URL:-https://prd.donhse.duckdns.org/mcp}"
+      "url": "${OLGAE_URL:-https://prd.donyk.link/mcp}"
     }
   }
 }

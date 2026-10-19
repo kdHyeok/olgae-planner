@@ -3,25 +3,23 @@
 import base64
 import hashlib
 import json
+import os
 import secrets
-from urllib.error import HTTPError
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+
+import httpx
 
 import main
 
 
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 def fetch(path, *, data=None, headers=None, redirect=True):
-    request = Request("http://frontend" + path, data=data, headers=headers or {})
-    try:
-        return (urlopen if redirect else build_opener(NoRedirect).open)(request)
-    except HTTPError as exc:
-        return exc
+    request_headers = {"Host": main.PUBLIC_HOST, **(headers or {})}
+    with httpx.Client(timeout=30, follow_redirects=redirect) as client:
+        response = client.request("POST" if data is not None else "GET",
+                                  os.environ.get("OAUTH_TEST_BASE_URL", "http://frontend") + path,
+                                  content=data, headers=request_headers)
+    return SimpleNamespace(status=response.status_code, headers=response.headers, read=response.read)
 
 
 def form(path, values, *, redirect=True):
@@ -45,6 +43,10 @@ def run():
         assert protected["resource"] == main.OAUTH_RESOURCE
         assert protected["authorization_servers"] == [main.PUBLIC_URL]
         metadata = json.load(fetch("/.well-known/oauth-authorization-server"))
+        assert metadata["issuer"] == main.PUBLIC_URL
+        for field, path in (("authorization_endpoint", "/authorize"), ("token_endpoint", "/token"),
+                            ("registration_endpoint", "/register"), ("revocation_endpoint", "/revoke")):
+            assert metadata[field] == main.PUBLIC_URL + path
         assert metadata["code_challenge_methods_supported"] == ["S256"]
         assert metadata["token_endpoint_auth_methods_supported"] == ["none"]
 
@@ -86,7 +88,7 @@ def run():
         }).encode(), headers={
             "Authorization": "Bearer " + legacy_token,
             "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-            "Host": "localhost:3000",
+            "Host": main.PUBLIC_HOST, "Origin": main.PUBLIC_URL,
         })
         assert legacy_initialize.status == 200 and b"olgae-planner" in legacy_initialize.read()
 
@@ -145,7 +147,7 @@ def run():
         }).encode(), headers={
             "Authorization": "Bearer " + tokens["access_token"],
             "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-            "Host": "localhost:3000",
+            "Host": main.PUBLIC_HOST, "Origin": main.PUBLIC_URL,
         })
         assert initialize.status == 200 and b"olgae-planner" in initialize.read()
 
@@ -154,7 +156,7 @@ def run():
         }).encode(), headers={
             "Authorization": "Bearer " + tokens["access_token"],
             "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-            "Host": "localhost:3000",
+            "Host": main.PUBLIC_HOST, "Origin": main.PUBLIC_URL,
         })
         tools_body = tools_list.read()
         assert tools_list.status == 200 and b"securitySchemes" in tools_body and b"oauth2" in tools_body
@@ -165,12 +167,32 @@ def run():
         }).encode(), headers={
             "Authorization": "Bearer " + tokens["access_token"],
             "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-            "Host": "localhost:3000",
+            "Host": main.PUBLIC_HOST, "Origin": main.PUBLIC_URL,
         })
         projects_body = projects_call.read()
         assert projects_call.status == 200, projects_body
         assert b'"isError":true' not in projects_body, projects_body
         assert b'"content"' in projects_body, projects_body
+
+        # 도메인 전환 전 토큰은 갱신을 통해 새 resource로 승격될 수 없다.
+        with main.pool.connection() as conn, conn.cursor() as cur:
+            old_tokens = main.mcp_app.provider._issue_tokens(
+                cur, client_id, user_id, [main.OAUTH_SCOPE],
+                "https://prd.donhse.duckdns.org/mcp")
+        assert main.lookup_token_user(old_tokens.access_token) is None
+        old_refresh = form("/token", {
+            "grant_type": "refresh_token", "client_id": client_id,
+            "refresh_token": old_tokens.refresh_token, "resource": main.OAUTH_RESOURCE,
+        })
+        assert old_refresh.status == 400
+        assert json.load(old_refresh)["error"] == "invalid_grant"
+
+        wrong_verifier = form("/token", {
+            "grant_type": "authorization_code", "client_id": client_id,
+            "code": callback_query["code"][0], "redirect_uri": redirect_uri,
+            "code_verifier": verifier, "resource": main.OAUTH_RESOURCE,
+        })
+        assert wrong_verifier.status == 400  # 이미 사용한 code는 다시 교환할 수 없다.
 
         refreshed_response = form("/token", {
             "grant_type": "refresh_token", "client_id": client_id,

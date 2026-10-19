@@ -360,7 +360,7 @@ API 토큰도 조회 전에 SHA-256 해시하며, 기존 원문 행은 기동 �
 | `client_id` | 클라이언트 | text | FK → oauth_clients(client_id) CASCADE, NN | | |
 | `user_id` | 연결 사용자 | int | FK → users(id) CASCADE, NN | | |
 | `scopes` | 발급 권한 | jsonb | NN | | 요청마다 `mcp` scope 확인 |
-| `resource` | 보호 리소스 | text | NN | | 요청마다 현재 `PUBLIC_URL/mcp`와 비교 |
+| `resource` | 보호 리소스 | text | NN | | access 조회 및 refresh 조회·교환마다 현재 `PUBLIC_URL/mcp`와 비교. 도메인 전환 전 토큰은 거부 |
 | `access_expires_at` | 액세스 만료 | timestamptz | NN | | 발급 후 1시간 |
 | `refresh_expires_at` | 갱신 만료 | timestamptz | NN | | 발급 후 30일. 갱신 시 access·refresh 모두 회전 |
 | `created_at` | 발급 시각 | timestamptz | NN | `now()` | |
