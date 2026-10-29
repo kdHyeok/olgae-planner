@@ -14,8 +14,10 @@ PRD & 기능명세서 서비스를 AI 에이전트에 붙이는 플러그인. �
 1. 서비스에 계정을 만든다 (가입은 관리자 승인 후 사용 가능).
 2. 플러그인을 설치하고 처음 툴을 호출할 때 OAuth 연결을 승인한다.
 
-다른 배포 서버를 쓸 때만 `OLGAE_URL=https://<호스트>/mcp`를 설정한다. 그 서버도 OAuth discovery와
-`PUBLIC_URL` 설정이 올바르게 배포되어 있어야 한다.
+기본 MCP URL은 변수 치환 없이 명시한다. Codex는 URL 안의 `${변수:-기본값}`을 치환하지 않는다.
+다른 서버는 `codex mcp add olgae-planner --url https://<호스트>/mcp` 또는
+`claude mcp add --transport http olgae-planner https://<호스트>/mcp`로 직접 등록한다.
+그 서버도 OAuth discovery와 `PUBLIC_URL` 설정이 올바르게 배포되어 있어야 한다.
 
 연결한 계정으로 보이는 것은 **그 계정이 만든 프로젝트 + 멤버로 참여중인 프로젝트**다.
 할 수 있는 일은 화면에서와 똑같이 프로젝트별 권한을 따른다 —
@@ -74,6 +76,12 @@ claude plugin install olgae-planner@olgae-planner
 `.codex-plugin/plugin.json` 이 같은 MCP 설정(`.mcp.json`)을 가리킨다.
 플러그인을 지원하지 않는 버전이라면 MCP 만 직접 등록한다
 (`~/.codex/config.toml` 의 `[mcp_servers.olgae-planner]`).
+
+CLI OAuth 승인을 마치면 브라우저는 CLI가 등록한 `http://127.0.0.1:<임시포트>/callback/...`로 돌아온다.
+이는 인증 코드를 로컬 Codex에 전달하는 정상 콜백이며, 서비스 홈페이지나 Google callback이 아니다.
+`Successfully logged in`이면 코드 교환이 완료된 것이다. CLI 수신기가 종료된 뒤 같은 주소를 다시
+열면 연결되지 않을 수 있으므로, OAuth callback URL을 재사용하지 않고 MCP 도구를 호출해 확인한다.
+로그인 성공은 프로젝트 목록 조회 성공과는 별도로 확인한다.
 
 스킬 자동 로딩은 Claude Code 기능이라, Codex 에는 작업 저장소의 `AGENTS.md` 로 규칙을 물린다.
 
